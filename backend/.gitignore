@@ -1,0 +1,35 @@
+# .gitignore
+
+# Node dependencies
+node_modules/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Temp and cache
+tmp/
+cache/
