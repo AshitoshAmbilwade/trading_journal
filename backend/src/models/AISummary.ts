@@ -3,22 +3,31 @@ import { Schema, model, Types } from "mongoose";
 
 interface AISummary {
   userId: Types.ObjectId;
-  periodStart: Date;
-  periodEnd: Date;
-  summary: string;
+  period: "daily" | "weekly" | "monthly";
+  dateRange: {
+    start: Date;
+    end: Date;
+  };
+  summaryText: string;
   plusPoints: string[];
   minusPoints: string[];
-  createdAt: Date;
+  aiSuggestions?: string[];
+  generatedAt: Date;
 }
 
 const AISummarySchema = new Schema<AISummary>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    periodStart: { type: Date, required: true },
-    periodEnd: { type: Date, required: true },
-    summary: { type: String, required: true },
+    period: { type: String, enum: ["daily", "weekly", "monthly"], required: true },
+    dateRange: {
+      start: { type: Date, required: true },
+      end: { type: Date, required: true },
+    },
+    summaryText: { type: String, required: true },
     plusPoints: { type: [String], default: [] },
     minusPoints: { type: [String], default: [] },
+    aiSuggestions: { type: [String], default: [] },
+    generatedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );

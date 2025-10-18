@@ -1,29 +1,37 @@
 // src/models/Gamification.ts
 import { Schema, model, Types } from "mongoose";
 
+interface Achievement {
+  title: string;
+  description: string;
+  achievedOn: Date;
+}
+
 interface Gamification {
   userId: Types.ObjectId;
-  streaks: { type: "journaling" | "profitableTrades"; count: number; lastUpdated: Date }[];
-  achievements: { title: string; description: string; dateEarned: Date }[];
+  currentStreak: number;
+  longestStreak: number;
+  totalTrades: number;
+  achievements: Achievement[];
+  level: number;
+  points: number;
 }
+
+const AchievementSchema = new Schema<Achievement>({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  achievedOn: { type: Date, default: Date.now },
+});
 
 const GamificationSchema = new Schema<Gamification>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    streaks: [
-      {
-        type: { type: String, enum: ["journaling", "profitableTrades"] },
-        count: { type: Number, default: 0 },
-        lastUpdated: { type: Date, default: Date.now },
-      },
-    ],
-    achievements: [
-      {
-        title: String,
-        description: String,
-        dateEarned: Date,
-      },
-    ],
+    currentStreak: { type: Number, default: 0 },
+    longestStreak: { type: Number, default: 0 },
+    totalTrades: { type: Number, default: 0 },
+    achievements: { type: [AchievementSchema], default: [] },
+    level: { type: Number, default: 1 },
+    points: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
