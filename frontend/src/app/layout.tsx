@@ -16,7 +16,7 @@ export const metadata = {
   title: "Trading Journal App",
   description: "Track, analyze, and improve your trading performance with AI-powered reports.",
   keywords: ["trading journal", "trade tracker", "AI trading analysis", "profit tracking", "investment journal"],
-  authors: [{ name: "Your Name" }],
+  authors: [{ name: "Ashitosh Ambilwade by Earnotic" }],
   openGraph: {
     title: "Trading Journal App",
     description: "AI-powered trade tracking and performance analysis.",
