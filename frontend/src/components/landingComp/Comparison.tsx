@@ -1,7 +1,7 @@
 "use client";
 import { motion } from "motion/react";
 import { Check, X, Zap, Shield } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 
 const features = [
   "Auto-Sync with Brokers",

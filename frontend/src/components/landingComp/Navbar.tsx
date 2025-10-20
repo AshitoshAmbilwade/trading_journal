@@ -1,12 +1,14 @@
 "use client";
-import { Button } from "./ui/button";
-import { Menu, TrendingUp, X, Sparkles } from "lucide-react";
+import { Button } from "../ui/button";
+import { Menu, TrendingUp, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { useRouter } from "next/navigation"; // ✅ added
 
 export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const router = useRouter(); // ✅ added
 
   useEffect(() => {
     const handleScroll = () => {
@@ -65,10 +67,15 @@ export function Navbar() {
 
           {/* CTA Buttons */}
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="ghost" size="sm" className="hover:bg-secondary">
+            <Button variant="ghost" size="sm" className="hover:bg-secondary"
+            onClick={() => router.push("/login")} >
               Login
             </Button>
-            <Button size="sm" className="bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all">
+            <Button
+              size="sm"
+              className="bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
+              onClick={() => router.push("/register")} // ✅ navigate to register
+            >
               Start Free
             </Button>
           </div>
@@ -107,7 +114,13 @@ export function Navbar() {
                   <Button variant="outline" className="w-full">
                     Login
                   </Button>
-                  <Button className="w-full bg-primary hover:bg-primary/90">
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90"
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      router.push("/register"); // ✅ mobile version
+                    }}
+                  >
                     Start Free
                   </Button>
                 </div>

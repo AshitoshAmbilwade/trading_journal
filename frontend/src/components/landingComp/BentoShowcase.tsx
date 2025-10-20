@@ -1,7 +1,7 @@
 "use client";
 import { motion } from "motion/react";
 import { Brain, Bell, Shield, Smartphone, BarChart3, FileText, Sparkles } from "lucide-react";
-import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { ImageWithFallback } from "../figma/ImageWithFallback";
 
 const features = [
   {

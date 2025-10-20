@@ -1,21 +1,21 @@
-import { Navbar } from "@/components/Navbar";
-import { Hero } from "@/components/Hero";
-import { BrokerIntegration } from "@/components/BrokerIntegration";
-import { VisualComparison } from "@/components/VisualComparison";
-import { Stats } from "@/components/Stats";
-import { Features } from "@/components/Features";
-import { DashboardPreview } from "@/components/DashboardPreview";
-import { HowItWorks } from "@/components/HowItWorks";
-import { BentoShowcase } from "@/components/BentoShowcase";
-import { AIInsights } from "@/components/AIInsights";
-import { Comparison } from "@/components/Comparison";
-import { Testimonials } from "@/components/Testimonials";
-import { Pricing } from "@/components/Pricing";
-import { ReferEarn } from "@/components/ReferEarn";
-import { Newsletter } from "@/components/Newsletter";
-import { Footer } from "@/components/Footer";
-import { FloatingCTA } from "@/components/FloatingCTA";
-import { ScrollProgress } from "@/components/ScrollProgress";
+import { Navbar } from "@/components/landingComp/Navbar";
+import { Hero } from "@/components/landingComp/Hero";
+import { BrokerIntegration } from "@/components/landingComp/BrokerIntegration";
+import { VisualComparison } from "@/components/landingComp/VisualComparison";
+import { Stats } from "@/components/landingComp/Stats";
+import { Features } from "@/components/landingComp/Features";
+import { DashboardPreview } from "@/components/landingComp/DashboardPreview";
+import { HowItWorks } from "@/components/landingComp/HowItWorks";
+import { BentoShowcase } from "@/components/landingComp/BentoShowcase";
+import { AIInsights } from "@/components/landingComp/AIInsights";
+import { Comparison } from "@/components/landingComp/Comparison";
+import { Testimonials } from "@/components/landingComp/Testimonials";
+import { Pricing } from "@/components/landingComp/Pricing";
+import { ReferEarn } from "@/components/landingComp/ReferEarn";
+import { Newsletter } from "@/components/landingComp/Newsletter";
+import { Footer } from "@/components/landingComp/Footer";
+import { FloatingCTA } from "@/components/landingComp/FloatingCTA";
+import { ScrollProgress } from "@/components/landingComp/ScrollProgress";
 
 export default function Home() {
   return (

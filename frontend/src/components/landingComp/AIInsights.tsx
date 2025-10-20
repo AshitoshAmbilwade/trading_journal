@@ -1,5 +1,5 @@
 "use client";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Brain, Zap } from "lucide-react";
 import { motion } from "motion/react";
 

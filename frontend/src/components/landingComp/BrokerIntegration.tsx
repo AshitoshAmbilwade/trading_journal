@@ -1,7 +1,7 @@
 "use client";
 import { motion } from "motion/react";
 import { RefreshCw, CheckCircle, Zap, Shield } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 
 const brokers = [
   { name: "Zerodha", logo: "Z", color: "from-blue-500 to-cyan-500", popular: true },

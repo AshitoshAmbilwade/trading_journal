@@ -1,6 +1,6 @@
 "use client";
-import { Button } from "./ui/button";
-import { Card } from "./ui/card";
+import { Button } from "../ui/button";
+import { Card } from "../ui/card";
 import { Check, Sparkles, Zap, Crown } from "lucide-react";
 import { motion } from "motion/react";
 

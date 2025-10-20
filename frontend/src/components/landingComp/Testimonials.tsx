@@ -1,5 +1,5 @@
 "use client";
-import { Card } from "./ui/card";
+import { Card } from "../ui/card";
 import { Star, Quote } from "lucide-react";
 import { motion } from "motion/react";
 

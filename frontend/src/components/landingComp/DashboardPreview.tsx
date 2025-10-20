@@ -1,6 +1,6 @@
 "use client";
 import { motion } from "motion/react";
-import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { ImageWithFallback } from "../figma/ImageWithFallback";
 
 export function DashboardPreview() {
   return (

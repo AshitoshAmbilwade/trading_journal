@@ -1,6 +1,6 @@
 "use client";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Mail } from "lucide-react";
 
 export function Newsletter() {

@@ -1,7 +1,7 @@
 "use client";
 
 import { BookOpen, BarChart3, Brain, FileDown, IndianRupee, Smartphone, RefreshCw, Lock, Target } from "lucide-react";
-import { Card } from "./ui/card";
+import { Card } from "../ui/card";
 import { motion } from "motion/react";
 
 const features = [

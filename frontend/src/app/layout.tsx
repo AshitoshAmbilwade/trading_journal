@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Toaster } from "@/components/ui/toaster"; // ✅ import toaster
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -12,10 +13,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Trading Journal App",
-  description: "Track, analyze, and improve your trading performance with AI-powered reports.",
-  keywords: ["trading journal", "trade tracker", "AI trading analysis", "profit tracking", "investment journal"],
+  description:
+    "Track, analyze, and improve your trading performance with AI-powered reports.",
+  keywords: [
+    "trading journal",
+    "trade tracker",
+    "AI trading analysis",
+    "profit tracking",
+    "investment journal",
+  ],
   authors: [{ name: "Ashitosh Ambilwade by Earnotic" }],
   openGraph: {
     title: "Trading Journal App",
@@ -28,7 +36,6 @@ export const metadata = {
   },
 };
 
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -40,6 +47,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+        <Toaster /> {/* ✅ add toaster globally at the end */}
       </body>
     </html>
   );

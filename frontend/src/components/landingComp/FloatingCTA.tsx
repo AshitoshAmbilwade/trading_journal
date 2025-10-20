@@ -2,7 +2,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useState, useEffect } from "react";
 import { TrendingUp, X } from "lucide-react";
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 
 export function FloatingCTA() {
   const [isVisible, setIsVisible] = useState(false);
