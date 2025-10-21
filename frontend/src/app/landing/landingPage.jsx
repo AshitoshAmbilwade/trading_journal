@@ -1,3 +1,4 @@
+"use client";
 import { Navbar } from "@/components/landingComp/Navbar";
 import { Hero } from "@/components/landingComp/Hero";
 import { BrokerIntegration } from "@/components/landingComp/BrokerIntegration";
@@ -17,7 +18,7 @@ import { Footer } from "@/components/landingComp/Footer";
 import { FloatingCTA } from "@/components/landingComp/FloatingCTA";
 import { ScrollProgress } from "@/components/landingComp/ScrollProgress";
 
-export default function Home() {
+export  function LandingPage() {
   return (
     <div className="min-h-screen bg-background">
       <ScrollProgress />

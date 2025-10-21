@@ -28,7 +28,7 @@ export default function LoginPage() {
 
       toast({ title: "Logged in", description: "Welcome back to your trading journal!" });
       localStorage.setItem("token", data.token);
-      router.push("/dashboard");
+      router.push("/");
     } catch (err: any) {
       toast({ title: "Error", description: err.message || "Login failed", variant: "destructive" });
     } finally {

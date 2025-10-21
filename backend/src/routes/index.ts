@@ -17,7 +17,7 @@ router.get("/", (req: Request, res: Response) => {
 router.use("/auth", authRoutes);
 router.use("/trades", tradesRoutes);
 //router.use("/dashboard", dashboardRoutes);
-router.use("/ai", aiRoutes);
+router.use("/ai-summaries", aiRoutes);
 router.use("/export-logs", exportLogRoutes);
 router.use("/gamification", gamificationRoutes);
 

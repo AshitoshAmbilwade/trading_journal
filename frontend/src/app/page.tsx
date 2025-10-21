@@ -1,43 +1,47 @@
-import { Navbar } from "@/components/landingComp/Navbar";
-import { Hero } from "@/components/landingComp/Hero";
-import { BrokerIntegration } from "@/components/landingComp/BrokerIntegration";
-import { VisualComparison } from "@/components/landingComp/VisualComparison";
-import { Stats } from "@/components/landingComp/Stats";
-import { Features } from "@/components/landingComp/Features";
-import { DashboardPreview } from "@/components/landingComp/DashboardPreview";
-import { HowItWorks } from "@/components/landingComp/HowItWorks";
-import { BentoShowcase } from "@/components/landingComp/BentoShowcase";
-import { AIInsights } from "@/components/landingComp/AIInsights";
-import { Comparison } from "@/components/landingComp/Comparison";
-import { Testimonials } from "@/components/landingComp/Testimonials";
-import { Pricing } from "@/components/landingComp/Pricing";
-import { ReferEarn } from "@/components/landingComp/ReferEarn";
-import { Newsletter } from "@/components/landingComp/Newsletter";
-import { Footer } from "@/components/landingComp/Footer";
-import { FloatingCTA } from "@/components/landingComp/FloatingCTA";
-import { ScrollProgress } from "@/components/landingComp/ScrollProgress";
+"use client";
+
+import { useEffect, useState } from "react";
+import {LandingPage} from "./landing/landingPage";
+import App from "./dashboard/DashboardPage";
+import { authApi } from "@/api/auth";
+import { toast } from "@/components/ui/use-toast";
 
 export default function Home() {
-  return (
-    <div className="min-h-screen bg-background">
-      <ScrollProgress />
-      <Navbar />
-      <Hero />
-      <BrokerIntegration />
-      <VisualComparison />
-      <Stats />
-      <Features />
-      <DashboardPreview />
-      <HowItWorks />
-      <BentoShowcase />
-      <AIInsights />
-      <Comparison />
-      <Testimonials />
-      <Pricing />
-      <ReferEarn />
-      <Newsletter />
-      <Footer />
-      <FloatingCTA />
-    </div>
-  );
+  const [loading, setLoading] = useState(true);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem("token");
+        if (token) {
+          await authApi.getMe();
+          setIsLoggedIn(true);
+
+          toast({
+            title: "Welcome back!",
+            description: "Your trading dashboard is ready!",
+          });
+        } else {
+          setIsLoggedIn(false);
+        }
+      } catch (err) {
+        setIsLoggedIn(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, []);
+
+  if (loading)
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        Loading...
+      </div>
+    );
+
+  return <>{isLoggedIn ? <App /> : <LandingPage />}</>;
 }
