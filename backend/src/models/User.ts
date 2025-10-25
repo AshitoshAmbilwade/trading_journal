@@ -5,6 +5,7 @@ interface User {
   name: string;
   email: string;
   password: string;
+  number: string;
   tier: "Free" | "Premium" | "UltraPremium";
   subscriptionStart?: Date;
   subscriptionEnd?: Date;
@@ -18,6 +19,7 @@ const UserSchema = new Schema<User>(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
+    number: { type: String },
     tier: { type: String, enum: ["Free", "Premium", "UltraPremium"], default: "Free" },
     subscriptionStart: Date,
     subscriptionEnd: Date,

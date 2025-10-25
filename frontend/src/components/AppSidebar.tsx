@@ -18,12 +18,20 @@ import {
 import { motion } from "motion/react";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
-import { useRouter } from "../utils/routes"; // ⚠️ Replace later with next/navigation
+import { useRouter } from "../utils/routes";
 import { Badge } from "./ui/badge";
+import { authApi } from "../api/auth";
 
 interface AppSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+interface User {
+  name: string;
+  email: string;
+  tier: string;
+  role?: string;
 }
 
 const navItems = [
@@ -62,7 +70,11 @@ const navItems = [
 ];
 
 const quickActions = [
-  { icon: Wallet, label: "Sync Brokers", gradient: "from-cyan-500 to-blue-600" },
+  {
+    icon: Wallet,
+    label: "Sync Brokers",
+    gradient: "from-cyan-500 to-blue-600",
+  },
   {
     icon: Bell,
     label: "Notifications",
@@ -74,8 +86,25 @@ const quickActions = [
 export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
   const { currentPath, navigate } = useRouter();
   const [isDesktop, setIsDesktop] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
 
-  // ✅ Detect viewport width only in browser (no window SSR crash)
+  useEffect(() => {
+  const fetchUser = async () => {
+    try {
+      const res = await authApi.getMe();
+      console.log("User API response:", res); // should log the full object
+      if (res?.user) setUser(res.user);      // ✅ use res.user instead of res.data
+    } catch (err) {
+      console.error("Failed to fetch user:", err);
+    } finally {
+      setLoadingUser(false);
+    }
+  };
+  fetchUser();
+}, []);
+
+
   useEffect(() => {
     const checkWidth = () => setIsDesktop(window.innerWidth >= 1024);
     checkWidth();
@@ -87,6 +116,15 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
     navigate(path);
     if (!isDesktop) onClose();
   };
+
+  const userInitials = user?.name
+    ? user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "JD";
 
   return (
     <>
@@ -106,7 +144,7 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
         initial={false}
         animate={{ x: isOpen || isDesktop ? 0 : -300 }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="fixed top-0 left-0 h-full w-[280px] bg-sidebar/95 backdrop-blur-xl border-r border-sidebar-border z-50 flex flex-col lg:static shadow-2xl"
+        className="fixed top-0 left-0 h-screen w-[280px] bg-sidebar/95 backdrop-blur-xl border-r border-sidebar-border z-50 flex flex-col lg:static shadow-2xl"
       >
         {/* Logo/Header */}
         <div className="p-6 relative overflow-hidden">
@@ -128,11 +166,19 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
         <div className="mx-4 mb-4 p-4 rounded-xl bg-gradient-to-br from-cyan-500/10 via-blue-600/10 to-purple-600/10 border border-border/50 backdrop-blur-sm">
           <div className="flex items-center gap-3 mb-3">
             <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center ring-2 ring-cyan-500/50">
-              <span className="text-white">JD</span>
+              <span className="text-white">
+                {loadingUser ? "..." : userInitials}
+              </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-medium truncate">John Doe</p>
-              <p className="text-xs text-muted-foreground">Pro Trader</p>
+              <p className="font-medium truncate">
+                {loadingUser ? "Loading..." : user?.name}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {loadingUser
+                  ? "..."
+                  : `${user?.tier || "Free"} • ${user?.email}`}
+              </p>
             </div>
             <Sparkles className="h-4 w-4 text-yellow-500" />
           </div>
@@ -191,7 +237,10 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
                 </div>
                 <div className="relative z-10 flex items-center gap-2">
                   {item.badge && (
-                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-5">
+                    <Badge
+                      variant="secondary"
+                      className="text-[10px] px-1.5 py-0 h-5"
+                    >
                       {item.badge}
                     </Badge>
                   )}
@@ -232,7 +281,7 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
 
         <Separator className="mx-4 mb-4" />
 
-        {/* Settings & Logout */}
+        {/* Settings */}
         <div className="p-4 space-y-2">
           <Button
             onClick={() => handleNavigate("/settings")}
@@ -245,13 +294,6 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
           >
             <Settings className="h-4 w-4 mr-2" />
             Settings
-          </Button>
-          <Button
-            variant="outline"
-            className="w-full justify-start border-destructive/50 text-destructive hover:bg-destructive hover:text-destructive-foreground"
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Logout
           </Button>
         </div>
       </motion.aside>

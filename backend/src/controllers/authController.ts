@@ -45,3 +45,44 @@ export const getMe = async (req: any, res: Response) => {
     res.status(500).json({ message: "Server error", error: err });
   }
 };
+
+export const updateMe = async (req: any, res: Response) => {
+  try {
+    const userId = req.user._id; // from authMiddleware
+    const { name, email, number, tier, password } = req.body;
+
+    const updateData: any = {};
+
+    if (name) updateData.name = name;
+    if (email) updateData.email = email;
+    if (number) updateData.number = number;
+    if (tier && ["Free", "Premium", "UltraPremium"].includes(tier)) updateData.tier = tier;
+
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updateData.password = hashedPassword;
+    }
+
+    const updatedUser = await UserModel.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedUser) return res.status(404).json({ message: "User not found" });
+
+    res.status(200).json({
+      message: "User updated successfully",
+      user: {
+        id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        number: updatedUser.number,
+        tier: updatedUser.tier,
+      },
+    });
+  } catch (err) {
+    console.error("Update user error:", err);
+    res.status(500).json({ message: "Server error", error: err });
+  }
+};
