@@ -1,4 +1,5 @@
-import { Router } from "express";
+// src/routes/trades.ts
+import { Router, RequestHandler, Request, Response, NextFunction } from "express";
 import {
   createTrade,
   getTrades,
@@ -7,16 +8,31 @@ import {
   deleteTrade,
 } from "../controllers/tradeController.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
+import { uploadSingle } from "../utils/cloudinary.js"; // single-file middleware
 
 const router = Router();
 
-// Protect all trade routes
+// Local request type for this file: multer may attach `file` (single) or `files` (map/array)
+interface LocalAuthRequest extends Request {
+  user?: any;
+  file?: Express.Multer.File;
+  files?: Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] };
+}
+
+// Simple wrapper to forward async errors to next()
+const wrap =
+  (fn: (...args: any[]) => Promise<any>): RequestHandler =>
+  (req: Request, res: Response, next: NextFunction) =>
+    Promise.resolve(fn(req as LocalAuthRequest, res, next)).catch(next);
+
+// Apply auth middleware for all trade routes
 router.use(authMiddleware);
 
-router.post("/", createTrade);
-router.get("/", getTrades);
-router.get("/:id", getTrade);
-router.put("/:id", updateTrade);
-router.delete("/:id", deleteTrade);
+// Routes — single image field name is "image"
+router.post("/", uploadSingle, wrap(createTrade));
+router.get("/", wrap(getTrades));
+router.get("/:id", wrap(getTrade));
+router.put("/:id", uploadSingle, wrap(updateTrade));
+router.delete("/:id", wrap(deleteTrade));
 
 export default router;
