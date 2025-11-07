@@ -49,12 +49,6 @@ const navItems = [
     badge: "Soon",
   },
   {
-    icon: MessageSquare,
-    label: "Trade Buddy",
-    path: "/trade-buddy",
-    gradient: "from-green-500 to-emerald-600",
-  },
-  {
     icon: FileText,
     label: "Reports",
     path: "/reports",

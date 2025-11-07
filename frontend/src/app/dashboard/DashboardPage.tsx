@@ -38,18 +38,7 @@ function AppRoutes() {
             <Dashboard />
           </motion.div>
         )}
-        {currentPath === "/trade-buddy" && (
-          <motion.div
-            key="trade-buddy"
-            variants={pageVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            transition={pageTransition}
-          >
-            <TradeBuddy />
-          </motion.div>
-        )}
+        
         {currentPath === "/reports" && (
           <motion.div
             key="reports"
