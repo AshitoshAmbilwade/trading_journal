@@ -86,22 +86,17 @@ const formatNumber = (v: number | undefined | null) => {
 };
 
 const calculateTradeMetrics = (trade: Trade) => {
-  const price = Number(trade.price) || 0;
+  const entryPrice = Number(trade.entryPrice) || 0;
+  const exitPrice = Number(trade.exitPrice) || 0;
   const quantity = Number(trade.quantity) || 0;
-  const pnl = Number(trade.pnl) || 0;
+  const pnl = Number((trade as any).pnl) || 0;
   const brokerage = Number(trade.brokerage) || 0;
   
   // Total investment
-  const totalInvestment = price * quantity;
+  const totalInvestment = entryPrice * quantity;
   
-  // Return percentage
+  // Return percentage (pnl already includes brokerage)
   const returnPercentage = totalInvestment > 0 ? (pnl / totalInvestment) * 100 : 0;
-  
-  // Net P&L (after brokerage)
-  const netPnl = pnl - brokerage;
-  
-  // Net return percentage
-  const netReturnPercentage = totalInvestment > 0 ? (netPnl / totalInvestment) * 100 : 0;
   
   // Trade duration
   let durationDays = 0;
@@ -119,19 +114,20 @@ const calculateTradeMetrics = (trade: Trade) => {
   let dailyReturnRate = 0;
   let annualizedReturn = 0;
   if (durationDays > 0 && totalInvestment > 0) {
-    dailyReturnRate = (netReturnPercentage / durationDays);
+    dailyReturnRate = (returnPercentage / durationDays);
     annualizedReturn = dailyReturnRate * 365;
   }
   
   return {
     totalInvestment,
     returnPercentage,
-    netPnl,
-    netReturnPercentage,
     durationDays,
     durationText,
     dailyReturnRate,
-    annualizedReturn
+    annualizedReturn,
+    entryPrice,
+    exitPrice,
+    brokerage
   };
 };
 
@@ -292,18 +288,18 @@ export default function TradeViewPage({ tradeId, onClose }: Props) {
           {trade && (
             <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
               <div className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl sm:rounded-2xl text-xs sm:text-sm font-semibold backdrop-blur-sm border ${
-                Number(trade.pnl) >= 0 
+                Number((trade as any).pnl) >= 0 
                   ? "bg-green-500/10 text-green-500 border-green-500/20" 
                   : "bg-red-500/10 text-red-500 border-red-500/20"
               }`}>
                 <div className="flex items-center gap-1 sm:gap-2">
-                  {Number(trade.pnl) >= 0 ? (
+                  {Number((trade as any).pnl) >= 0 ? (
                     <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
                   ) : (
                     <TrendingDown className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
                   )}
                   <span className="hidden xs:inline">
-                    {Number(trade.pnl) >= 0 ? "Profitable" : "Loss"}
+                    {Number((trade as any).pnl) >= 0 ? "Profitable" : "Loss"}
                   </span>
                 </div>
               </div>
@@ -374,15 +370,15 @@ export default function TradeViewPage({ tradeId, onClose }: Props) {
                     </div>
                   </div>
 
-                  {/* Gross P&L */}
+                  {/* P&L (Already includes brokerage) */}
                   <div className="bg-gray-800/50 rounded-lg p-3 sm:p-4 border border-gray-600 min-w-0">
                     <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                       <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4 text-gray-400 flex-shrink-0" />
-                      <span className="text-xs sm:text-sm font-medium text-gray-400 truncate">Gross P&L</span>
+                      <span className="text-xs sm:text-sm font-medium text-gray-400 truncate">P&L</span>
                     </div>
                     <div className="flex flex-col xs:flex-row xs:items-end gap-1 xs:gap-2 min-w-0">
-                      <p className={`text-lg sm:text-xl lg:text-2xl font-bold truncate ${Number(trade.pnl) >= 0 ? 'text-green-500' : 'text-red-500'}`} title={inr(Number(trade.pnl))}>
-                        {inr(Number(trade.pnl))}
+                      <p className={`text-lg sm:text-xl lg:text-2xl font-bold truncate ${Number((trade as any).pnl) >= 0 ? 'text-green-500' : 'text-red-500'}`} title={inr(Number((trade as any).pnl))}>
+                        {inr(Number((trade as any).pnl))}
                       </p>
                       <div className="flex-shrink-0">
                         <PerformanceIndicator 
@@ -391,27 +387,19 @@ export default function TradeViewPage({ tradeId, onClose }: Props) {
                         />
                       </div>
                     </div>
+                    <p className="text-xs text-gray-500 mt-1 truncate" title={inr(Number(trade.brokerage))}>
+                      Includes brokerage: {inr(Number(trade.brokerage))}
+                    </p>
                   </div>
 
-                  {/* Net P&L */}
+                  {/* Brokerage */}
                   <div className="bg-gray-800/50 rounded-lg p-3 sm:p-4 border border-gray-600 min-w-0">
                     <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                       <PieChart className="h-3 w-3 sm:h-4 sm:w-4 text-gray-400 flex-shrink-0" />
-                      <span className="text-xs sm:text-sm font-medium text-gray-400 truncate">Net P&L</span>
+                      <span className="text-xs sm:text-sm font-medium text-gray-400 truncate">Brokerage</span>
                     </div>
-                    <div className="flex flex-col xs:flex-row xs:items-end gap-1 xs:gap-2 min-w-0">
-                      <p className={`text-lg sm:text-xl lg:text-2xl font-bold truncate ${metrics.netPnl >= 0 ? 'text-green-500' : 'text-red-500'}`} title={inr(metrics.netPnl)}>
-                        {inr(metrics.netPnl)}
-                      </p>
-                      <div className="flex-shrink-0">
-                        <PerformanceIndicator 
-                          value={metrics.netReturnPercentage} 
-                          type="percentage" 
-                        />
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1 truncate" title={inr(Number(trade.brokerage))}>
-                      After brokerage: {inr(Number(trade.brokerage))}
+                    <p className="text-lg sm:text-xl lg:text-2xl font-bold text-white truncate" title={inr(metrics.brokerage)}>
+                      {inr(metrics.brokerage)}
                     </p>
                   </div>
 
@@ -448,6 +436,8 @@ export default function TradeViewPage({ tradeId, onClose }: Props) {
                     {[
                       { icon: <Sparkles className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Symbol", value: trade.symbol, highlight: true },
                       { icon: <Zap className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Type", value: trade.type, capitalize: true },
+                      { icon: <DollarSign className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Entry Price", value: inr(metrics.entryPrice) },
+                      { icon: <DollarSign className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Exit Price", value: trade.exitPrice ? inr(metrics.exitPrice) : "-" },
                       { icon: <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Trade Date", value: formatDateShort(trade.tradeDate) },
                       { icon: <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Entry Date", value: formatDate(trade.entryDate) },
                       { icon: <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />, label: "Exit Date", value: formatDate(trade.exitDate) },
@@ -670,16 +660,9 @@ export default function TradeViewPage({ tradeId, onClose }: Props) {
                   </div>
                   
                   <div className="flex justify-between items-center py-2 sm:py-3 border-b border-gray-600 min-w-0">
-                    <span className="text-xs sm:text-sm text-gray-400 truncate">Gross Return</span>
+                    <span className="text-xs sm:text-sm text-gray-400 truncate">Return</span>
                     <div className="flex-shrink-0 ml-2">
                       <PerformanceIndicator value={metrics.returnPercentage} type="percentage" />
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center py-2 sm:py-3 border-b border-gray-600 min-w-0">
-                    <span className="text-xs sm:text-sm text-gray-400 truncate">Net Return</span>
-                    <div className="flex-shrink-0 ml-2">
-                      <PerformanceIndicator value={metrics.netReturnPercentage} type="percentage" />
                     </div>
                   </div>
                   

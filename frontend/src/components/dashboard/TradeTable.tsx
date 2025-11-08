@@ -58,10 +58,35 @@ function extractImageString(img: any): string {
   return "";
 }
 
+// Calculate P&L based on entry price, exit price, quantity, type, and brokerage
+const calculatePnL = (
+  type: "Buy" | "Sell",
+  entryPrice: number,
+  exitPrice: number | undefined,
+  quantity: number,
+  brokerage: number = 0
+): number => {
+  if (!entryPrice || !exitPrice || !quantity) return 0;
+  
+  let grossPnL = 0;
+  
+  if (type === "Buy") {
+    // For Buy: Profit = (Exit - Entry) * Quantity
+    grossPnL = (exitPrice - entryPrice) * quantity;
+  } else {
+    // For Sell: Profit = (Entry - Exit) * Quantity  
+    grossPnL = (entryPrice - exitPrice) * quantity;
+  }
+  
+  // Subtract brokerage
+  const netPnL = grossPnL - brokerage;
+  return Number(netPnL.toFixed(2));
+};
+
 // Export functions
 const exportToCSV = (trades: Trade[]) => {
   const headers = [
-    "Symbol", "Type", "Quantity", "Price", "P/L", "Brokerage", 
+    "Symbol", "Type", "Quantity", "Entry Price", "Exit Price", "P/L", "Brokerage", 
     "Trade Date", "Entry Date", "Exit Date", "Broker", "Strategy", 
     "Session", "Segment", "Trade Type", "Direction", "Chart Timeframe",
     "Entry Condition", "Exit Condition", "Source", "Entry Note", 
@@ -72,8 +97,9 @@ const exportToCSV = (trades: Trade[]) => {
     trade.symbol,
     trade.type,
     trade.quantity,
-    trade.price,
-    trade.pnl,
+    trade.entryPrice,
+    trade.exitPrice || '',
+    trade.pnl || '',
     trade.brokerage || '',
     trade.tradeDate,
     trade.entryDate || '',
@@ -134,8 +160,10 @@ export function TradeTable() {
     type: "all",
     quantityMin: "",
     quantityMax: "",
-    priceMin: "",
-    priceMax: "",
+    entryPriceMin: "",
+    entryPriceMax: "",
+    exitPriceMin: "",
+    exitPriceMax: "",
     pnlMin: "",
     pnlMax: "",
     tradeDateFrom: "",
@@ -161,14 +189,24 @@ export function TradeTable() {
     symbol: "",
     type: "Buy",
     quantity: 0,
-    price: 0,
-    pnl: 0,
+    entryPrice: 0,
+    exitPrice: undefined,
+    brokerage: 0,
     tradeDate: new Date().toISOString(),
     entryDate: undefined,
     exitDate: undefined,
     source: "manual",
     image: "",
   });
+
+  // Calculate P&L whenever relevant fields change
+  const calculatedPnL = calculatePnL(
+    newTrade.type || "Buy",
+    newTrade.entryPrice || 0,
+    newTrade.exitPrice,
+    newTrade.quantity || 0,
+    newTrade.brokerage || 0
+  );
 
   useEffect(() => {
     loadTrades();
@@ -218,8 +256,8 @@ export function TradeTable() {
     setSaving(true);
 
     try {
-      if (!newTrade.symbol || !newTrade.quantity || !newTrade.price) {
-        alert("Symbol, Quantity, and Price are required.");
+      if (!newTrade.symbol || !newTrade.quantity || !newTrade.entryPrice) {
+        alert("Symbol, Quantity, and Entry Price are required.");
         setSaving(false);
         return;
       }
@@ -227,13 +265,17 @@ export function TradeTable() {
       const payload: Partial<Trade> = {
         ...newTrade,
         quantity: Number(newTrade.quantity),
-        price: Number(newTrade.price),
-        pnl: Number(newTrade.pnl) || 0,
+        entryPrice: Number(newTrade.entryPrice),
+        exitPrice: newTrade.exitPrice ? Number(newTrade.exitPrice) : undefined,
         brokerage: Number(newTrade.brokerage) || 0,
         tradeDate: new Date(newTrade.tradeDate || new Date()).toISOString(),
         entryDate: newTrade.entryDate ? new Date(newTrade.entryDate).toISOString() : undefined,
         exitDate: newTrade.exitDate ? new Date(newTrade.exitDate).toISOString() : undefined,
       };
+
+      // P&L will be calculated automatically by the backend based on the prices
+      // Remove pnl from payload since backend calculates it
+      delete (payload as any).pnl;
 
       if (payload.image && typeof payload.image === "object" && !(payload.image instanceof File)) {
         payload.image = extractImageString(payload.image);
@@ -256,8 +298,9 @@ export function TradeTable() {
         symbol: "",
         type: "Buy",
         quantity: 0,
-        price: 0,
-        pnl: 0,
+        entryPrice: 0,
+        exitPrice: undefined,
+        brokerage: 0,
         tradeDate: new Date().toISOString(),
         entryDate: undefined,
         exitDate: undefined,
@@ -340,10 +383,12 @@ export function TradeTable() {
     const matchesType = filters.type === "all" || trade.type === filters.type;
     const matchesQuantity = (!filters.quantityMin || Number(trade.quantity) >= Number(filters.quantityMin)) &&
                           (!filters.quantityMax || Number(trade.quantity) <= Number(filters.quantityMax));
-    const matchesPrice = (!filters.priceMin || Number(trade.price) >= Number(filters.priceMin)) &&
-                        (!filters.priceMax || Number(trade.price) <= Number(filters.priceMax));
-    const matchesPnl = (!filters.pnlMin || Number(trade.pnl) >= Number(filters.pnlMin)) &&
-                      (!filters.pnlMax || Number(trade.pnl) <= Number(filters.pnlMax));
+    const matchesEntryPrice = (!filters.entryPriceMin || Number(trade.entryPrice) >= Number(filters.entryPriceMin)) &&
+                        (!filters.entryPriceMax || Number(trade.entryPrice) <= Number(filters.entryPriceMax));
+    const matchesExitPrice = (!filters.exitPriceMin || (trade.exitPrice && Number(trade.exitPrice) >= Number(filters.exitPriceMin))) &&
+                           (!filters.exitPriceMax || (trade.exitPrice && Number(trade.exitPrice) <= Number(filters.exitPriceMax)));
+    const matchesPnl = (!filters.pnlMin || Number((trade as any).pnl) >= Number(filters.pnlMin)) &&
+                      (!filters.pnlMax || Number((trade as any).pnl) <= Number(filters.pnlMax));
     const matchesBroker = !filters.broker || trade.broker?.toLowerCase().includes(filters.broker.toLowerCase());
     const matchesStrategy = !filters.strategy || trade.strategy?.toLowerCase().includes(filters.strategy.toLowerCase());
     const matchesSession = filters.session === "all" || trade.session === filters.session;
@@ -370,11 +415,11 @@ export function TradeTable() {
 
     // Status filter
     const matchesStatus = filters.status === "all" || 
-                         (filters.status === "active" && !trade.exitDate) ||
-                         (filters.status === "closed" && trade.exitDate);
+                         (filters.status === "active" && !trade.exitPrice) ||
+                         (filters.status === "closed" && trade.exitPrice);
 
-    return matchesSearch && matchesSymbol && matchesType && matchesQuantity && matchesPrice && 
-           matchesPnl && matchesBroker && matchesStrategy && matchesSession && matchesSegment &&
+    return matchesSearch && matchesSymbol && matchesType && matchesQuantity && matchesEntryPrice && 
+           matchesExitPrice && matchesPnl && matchesBroker && matchesStrategy && matchesSession && matchesSegment &&
            matchesTradeType && matchesDirection && matchesChartTimeframe && matchesEntryCondition &&
            matchesExitCondition && matchesSource && matchesTradeDate && matchesEntryDate &&
            matchesExitDate && matchesStatus;
@@ -386,8 +431,10 @@ export function TradeTable() {
       type: "all",
       quantityMin: "",
       quantityMax: "",
-      priceMin: "",
-      priceMax: "",
+      entryPriceMin: "",
+      entryPriceMax: "",
+      exitPriceMin: "",
+      exitPriceMax: "",
       pnlMin: "",
       pnlMax: "",
       tradeDateFrom: "",
@@ -493,8 +540,9 @@ export function TradeTable() {
                         symbol: "",
                         type: "Buy",
                         quantity: 0,
-                        price: 0,
-                        pnl: 0,
+                        entryPrice: 0,
+                        exitPrice: undefined,
+                        brokerage: 0,
                         tradeDate: new Date().toISOString(),
                         entryDate: undefined,
                         exitDate: undefined,
@@ -520,14 +568,14 @@ export function TradeTable() {
                   {[
                     { label: "Symbol", key: "symbol", type: "text" },
                     { label: "Quantity", key: "quantity", type: "number" },
-                    { label: "Price", key: "price", type: "number" },
-                    { label: "P/L", key: "pnl", type: "number" },
+                    { label: "Entry Price", key: "entryPrice", type: "number" },
+                    { label: "Exit Price", key: "exitPrice", type: "number" },
+                    { label: "Brokerage", key: "brokerage", type: "number" },
                     { label: "Trade Date", key: "tradeDate", type: "date" },
                     { label: "Entry Date", key: "entryDate", type: "date" },
                     { label: "Exit Date", key: "exitDate", type: "date" },
                     { label: "Broker", key: "broker", type: "text" },
                     { label: "Strategy", key: "strategy", type: "text" },
-                    { label: "Brokerage", key: "brokerage", type: "number" },
                     { label: "Chart Timeframe", key: "chartTimeframe", type: "text" },
                     { label: "Remark", key: "remark", type: "text" },
                   ].map((f) => (
@@ -559,6 +607,22 @@ export function TradeTable() {
                       />
                     </div>
                   ))}
+
+                  {/* Calculated P&L Display */}
+                  <div>
+                    <label className="text-sm font-medium">Calculated P&L</label>
+                    <Input
+                      type="text"
+                      value={formatCurrency(calculatedPnL)}
+                      readOnly
+                      className={`bg-gray-800 border border-gray-600 ${
+                        calculatedPnL >= 0 ? "text-green-500" : "text-red-500"
+                      } font-medium`}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      {newTrade.type === "Buy" ? "Buy: (Exit - Entry) × Qty" : "Sell: (Entry - Exit) × Qty"} - Brokerage
+                    </p>
+                  </div>
 
                   {/* Dropdowns */}
                   {[
@@ -797,22 +861,43 @@ export function TradeTable() {
                   </div>
                 </div>
 
-                {/* Price Range */}
+                {/* Entry Price Range */}
                 <div>
-                  <label className="text-sm font-medium text-gray-300">Price Range</label>
+                  <label className="text-sm font-medium text-gray-300">Entry Price Range</label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       placeholder="Min"
                       type="number"
-                      value={filters.priceMin}
-                      onChange={(e) => setFilters(prev => ({ ...prev, priceMin: e.target.value }))}
+                      value={filters.entryPriceMin}
+                      onChange={(e) => setFilters(prev => ({ ...prev, entryPriceMin: e.target.value }))}
                       className="bg-gray-700 border-gray-600 text-white"
                     />
                     <Input
                       placeholder="Max"
                       type="number"
-                      value={filters.priceMax}
-                      onChange={(e) => setFilters(prev => ({ ...prev, priceMax: e.target.value }))}
+                      value={filters.entryPriceMax}
+                      onChange={(e) => setFilters(prev => ({ ...prev, entryPriceMax: e.target.value }))}
+                      className="bg-gray-700 border-gray-600 text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Exit Price Range */}
+                <div>
+                  <label className="text-sm font-medium text-gray-300">Exit Price Range</label>
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      placeholder="Min"
+                      type="number"
+                      value={filters.exitPriceMin}
+                      onChange={(e) => setFilters(prev => ({ ...prev, exitPriceMin: e.target.value }))}
+                      className="bg-gray-700 border-gray-600 text-white"
+                    />
+                    <Input
+                      placeholder="Max"
+                      type="number"
+                      value={filters.exitPriceMax}
+                      onChange={(e) => setFilters(prev => ({ ...prev, exitPriceMax: e.target.value }))}
                       className="bg-gray-700 border-gray-600 text-white"
                     />
                   </div>
@@ -906,7 +991,8 @@ export function TradeTable() {
                 <TableHead>Symbol</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Qty</TableHead>
-                <TableHead>Price</TableHead>
+                <TableHead>Entry</TableHead>
+                <TableHead>Exit</TableHead>
                 <TableHead>P/L</TableHead>
                 <TableHead>Strategy</TableHead>
                 <TableHead>Broker</TableHead>
@@ -917,7 +1003,7 @@ export function TradeTable() {
               {loading ? (
                 [...Array(5)].map((_, i) => (
                   <TableRow key={i}>
-                    {[...Array(9)].map((_, j) => (
+                    {[...Array(10)].map((_, j) => (
                       <TableCell key={j}>
                         <Skeleton className="h-4 w-full" />
                       </TableCell>
@@ -926,7 +1012,7 @@ export function TradeTable() {
                 ))
               ) : filteredTrades.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-6 text-gray-400">
+                  <TableCell colSpan={10} className="text-center py-6 text-gray-400">
                     No trades found
                   </TableCell>
                 </TableRow>
@@ -953,16 +1039,17 @@ export function TradeTable() {
                       </Badge>
                     </TableCell>
                     <TableCell>{t.quantity}</TableCell>
-                    <TableCell>{formatCurrency(Number(t.price))}</TableCell>
+                    <TableCell>{formatCurrency(Number(t.entryPrice))}</TableCell>
+                    <TableCell>{t.exitPrice ? formatCurrency(Number(t.exitPrice)) : "-"}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        {t.pnl >= 0 ? (
+                        {((t as any).pnl >= 0 ? (
                           <TrendingUp className="h-4 w-4 text-green-500" />
                         ) : (
                           <TrendingDown className="h-4 w-4 text-red-500" />
-                        )}
-                        <span className={t.pnl >= 0 ? "text-green-500" : "text-red-500"}>
-                          {formatCurrency(Math.abs(Number(t.pnl)))}
+                        ))}
+                        <span className={((t as any).pnl >= 0 ? "text-green-500" : "text-red-500")}>
+                          {formatCurrency(Math.abs(Number((t as any).pnl)))}
                         </span>
                       </div>
                     </TableCell>

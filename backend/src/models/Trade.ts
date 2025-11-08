@@ -1,4 +1,3 @@
-// src/models/Trade.ts
 import { Schema, model, Types, Document } from "mongoose";
 
 export interface Trade extends Document {
@@ -6,8 +5,11 @@ export interface Trade extends Document {
   symbol: string;
   type: "Buy" | "Sell";
   quantity: number;
-  price: number;
-  pnl: number;
+
+  // ✅ New fields
+  entryPrice: number;
+  exitPrice?: number;
+  pnl?: number;
 
   session?: "morning" | "mid" | "last";
   segment?: "equity" | "future" | "forex" | "option" | "commodity" | "currency" | "crypto";
@@ -42,7 +44,6 @@ export interface Trade extends Document {
   source: "manual" | "broker" | "importCSV";
   broker?: string;
 
-  // SINGLE image URL (Cloudinary). Use empty string as default.
   image?: string;
 
   aiAnalysis?: {
@@ -50,6 +51,7 @@ export interface Trade extends Document {
     plusPoints: string[];
     minusPoints: string[];
   };
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,9 +61,12 @@ const TradeSchema = new Schema<Trade>(
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     symbol: { type: String, required: true },
     type: { type: String, enum: ["Buy", "Sell"], required: true },
-    quantity: { type: Number, required: true },
-    price: { type: Number, required: true },
-    pnl: { type: Number, required: true },
+    quantity: { type: Number, required: true, min: 1 },
+
+    // ✅ New structured price fields
+    entryPrice: { type: Number, required: true },
+    exitPrice: { type: Number, default: null },
+    pnl: { type: Number, default: 0 },
 
     session: { type: String, enum: ["morning", "mid", "last"] },
     segment: {
@@ -95,14 +100,13 @@ const TradeSchema = new Schema<Trade>(
     entryNote: { type: String },
     exitDate: { type: Date },
     exitNote: { type: String },
-    brokerage: { type: Number },
+    brokerage: { type: Number, default: 0 },
     remark: { type: String },
     notes: { type: String },
     tradeDate: { type: Date, default: Date.now },
     source: { type: String, enum: ["manual", "broker", "importCSV"], default: "manual" },
     broker: { type: String },
 
-    // SINGLE image URL (Cloudinary)
     image: { type: String, default: "" },
 
     aiAnalysis: {
@@ -113,5 +117,25 @@ const TradeSchema = new Schema<Trade>(
   },
   { timestamps: true }
 );
+
+// ✅ Auto-calculate PNL before save
+TradeSchema.pre("save", function (next) {
+  if (this.entryPrice && this.exitPrice && this.quantity) {
+    const gross =
+      this.type === "Buy"
+        ? (this.exitPrice - this.entryPrice) * this.quantity
+        : (this.entryPrice - this.exitPrice) * this.quantity;
+
+    const brokerage = this.brokerage ?? 0;
+    this.pnl = Number((gross - brokerage).toFixed(2));
+  }
+  next();
+});
+
+// ✅ Optional index optimization
+TradeSchema.index({ userId: 1, tradeDate: -1 });
+TradeSchema.index({ strategy: 1 });
+TradeSchema.index({ segment: 1 });
+TradeSchema.index({ tradeType: 1 });
 
 export const TradeModel = model<Trade>("Trade", TradeSchema);
