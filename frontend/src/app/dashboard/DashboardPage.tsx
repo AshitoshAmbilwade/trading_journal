@@ -6,6 +6,8 @@ import { Dashboard } from "./Dashboard";
 import { TradeBuddy } from "./TradeBuddy";
 import { Reports } from "./Reports";
 import { Settings } from "./Settings";
+// Analytics import (index.ts in components/analytics exports AnalyticsShell as default export)
+import { AnalyticsShell } from "../../components/analytics";
 
 const pageVariants = {
   initial: { opacity: 0, y: 20 },
@@ -38,7 +40,21 @@ function AppRoutes() {
             <Dashboard />
           </motion.div>
         )}
-        
+
+        {/* Analytics route */}
+        {currentPath === "/analytics" && (
+          <motion.div
+            key="analytics"
+            variants={pageVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={pageTransition}
+          >
+            <AnalyticsShell />
+          </motion.div>
+        )}
+
         {currentPath === "/reports" && (
           <motion.div
             key="reports"

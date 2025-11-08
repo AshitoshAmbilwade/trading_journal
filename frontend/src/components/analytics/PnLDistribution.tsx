@@ -1,12 +1,27 @@
 "use client";
+import React from "react";
 import { motion } from "motion/react";
 import { BarChart3 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "../ui/card";
 import { SimpleBarChart } from "../charts/SimpleBarChart";
 import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
 
-// Mock data
-const distributionData = [
+type BarItem = { range: string; count: number };
+
+interface PnLDistributionProps {
+  data?: BarItem[];
+  loading?: boolean;
+}
+
+// ✅ fallback mock (for empty / testing)
+const MOCK_DATA: BarItem[] = [
   { range: "-5k to -3k", count: 2 },
   { range: "-3k to -1k", count: 5 },
   { range: "-1k to 0", count: 8 },
@@ -16,16 +31,22 @@ const distributionData = [
   { range: "5k+", count: 3 },
 ];
 
-export function PnLDistribution() {
-  const totalTrades = distributionData.reduce((sum, item) => sum + item.count, 0);
-  const profitableTrades = distributionData.slice(3).reduce((sum, item) => sum + item.count, 0);
-  const winRate = ((profitableTrades / totalTrades) * 100).toFixed(0);
+export function PnLDistribution({ data, loading = false }: PnLDistributionProps) {
+  const chartData = data && data.length > 0 ? data : MOCK_DATA;
+
+  // compute winrate
+  const totalTrades = chartData.reduce((sum, item) => sum + item.count, 0);
+  const profitableTrades = chartData
+    .filter((d) => !d.range.includes("-")) // crude heuristic for positive
+    .reduce((sum, item) => sum + item.count, 0);
+  const winRate =
+    totalTrades > 0 ? ((profitableTrades / totalTrades) * 100).toFixed(0) : "0";
 
   return (
     <Card className="border-border/50 bg-card/40 backdrop-blur-xl relative overflow-hidden group hover:border-purple/30 transition-all">
       {/* Background gradient */}
       <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-pink-500/5 to-orange-500/5 opacity-50 group-hover:opacity-100 transition-opacity" />
-      <motion.div 
+      <motion.div
         className="absolute -top-24 -right-24 h-96 w-96 bg-gradient-to-br from-purple-500/10 to-pink-500/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700"
         animate={{
           scale: [1, 1.1, 1],
@@ -36,7 +57,7 @@ export function PnLDistribution() {
           ease: "easeInOut",
         }}
       />
-      
+
       <CardHeader className="relative">
         <div className="flex items-center justify-between">
           <div>
@@ -51,14 +72,25 @@ export function PnLDistribution() {
             </CardDescription>
           </div>
           <div className="text-right">
-            <Badge className="bg-purple-500/10 text-purple-500 border-purple-500/30">
-              {winRate}% Win Rate
-            </Badge>
+            {loading ? (
+              <Skeleton className="h-5 w-16" />
+            ) : (
+              <Badge className="bg-purple-500/10 text-purple-500 border-purple-500/30">
+                {winRate}% Win Rate
+              </Badge>
+            )}
           </div>
         </div>
       </CardHeader>
+
       <CardContent className="relative">
-        <SimpleBarChart data={distributionData} />
+        {loading ? (
+          <div className="h-[300px] flex items-center justify-center">
+            <Skeleton className="h-40 w-full" />
+          </div>
+        ) : (
+          <SimpleBarChart data={chartData} />
+        )}
       </CardContent>
     </Card>
   );

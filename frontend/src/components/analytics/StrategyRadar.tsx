@@ -1,12 +1,30 @@
 "use client";
+import React from "react";
 import { motion } from "motion/react";
 import { Target, TrendingUp } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "../ui/card";
 import { SimpleRadarChart } from "../charts/SimpleRadarChart";
 import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
 
-// Mock data
-const strategyData = [
+type StrategyItem = {
+  strategy: string;
+  effectiveness: number;
+};
+
+interface StrategyRadarProps {
+  data?: StrategyItem[];
+  loading?: boolean;
+}
+
+// ✅ fallback mock (used when data missing)
+const MOCK_DATA: StrategyItem[] = [
   { strategy: "Momentum", effectiveness: 85 },
   { strategy: "Breakout", effectiveness: 72 },
   { strategy: "Reversal", effectiveness: 68 },
@@ -15,16 +33,21 @@ const strategyData = [
   { strategy: "Options", effectiveness: 62 },
 ];
 
-export function StrategyRadar() {
-  const bestStrategy = strategyData.reduce((best, current) => 
-    current.effectiveness > best.effectiveness ? current : best
-  );
+export function StrategyRadar({ data, loading = false }: StrategyRadarProps) {
+  const chartData = data && data.length > 0 ? data : MOCK_DATA;
+
+  const bestStrategy =
+    chartData.length > 0
+      ? chartData.reduce((best, current) =>
+          current.effectiveness > best.effectiveness ? current : best
+        )
+      : null;
 
   return (
     <Card className="border-border/50 bg-card/40 backdrop-blur-xl relative overflow-hidden group hover:border-cyan-500/30 transition-all">
       {/* Background gradient */}
       <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-blue-500/5 to-purple-500/5 opacity-50 group-hover:opacity-100 transition-opacity" />
-      <motion.div 
+      <motion.div
         className="absolute -bottom-24 -right-24 h-96 w-96 bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700"
         animate={{
           scale: [1, 1.15, 1],
@@ -36,7 +59,7 @@ export function StrategyRadar() {
           ease: "linear",
         }}
       />
-      
+
       <CardHeader className="relative">
         <div className="flex items-center justify-between">
           <div>
@@ -51,15 +74,30 @@ export function StrategyRadar() {
             </CardDescription>
           </div>
           <div className="text-right">
-            <Badge className="bg-cyan-500/10 text-cyan-500 border-cyan-500/30 flex items-center gap-1">
-              <TrendingUp className="h-3 w-3" />
-              {bestStrategy.strategy}
-            </Badge>
+            {loading ? (
+              <Skeleton className="h-5 w-20" />
+            ) : bestStrategy ? (
+              <Badge className="bg-cyan-500/10 text-cyan-500 border-cyan-500/30 flex items-center gap-1">
+                <TrendingUp className="h-3 w-3" />
+                {bestStrategy.strategy}
+              </Badge>
+            ) : (
+              <Badge className="bg-muted/20 text-muted-foreground border-border/30">
+                No Data
+              </Badge>
+            )}
           </div>
         </div>
       </CardHeader>
+
       <CardContent className="relative flex items-center justify-center">
-        <SimpleRadarChart data={strategyData} />
+        {loading ? (
+          <div className="h-[300px] flex items-center justify-center w-full">
+            <Skeleton className="h-60 w-full" />
+          </div>
+        ) : (
+          <SimpleRadarChart data={chartData} />
+        )}
       </CardContent>
     </Card>
   );
