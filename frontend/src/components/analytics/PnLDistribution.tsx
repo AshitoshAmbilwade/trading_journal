@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { motion } from "motion/react";
 import { BarChart3, Trophy } from "lucide-react";
 import {
@@ -10,64 +10,112 @@ import {
   CardTitle,
   CardDescription,
 } from "../ui/card";
-import { SimpleBarChart } from "../charts/SimpleBarChart";
-import { Badge } from "../ui/badge";
 import { Skeleton } from "../ui/skeleton";
+import { Badge } from "../ui/badge";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as ReTooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+import { analyticsApi } from "@/api/analytics";
 
-type BarItem = { range: string; count: number };
-
-interface PnLDistributionProps {
-  data?: BarItem[];
-  loading?: boolean;
+interface TradeTypeDist {
+  _id: string;
+  count: number;
+  totalPnl: number;
+  avgPnl: number;
+  winRate: number;
 }
 
-/** Fallback data for dev/testing */
-const MOCK_DATA: BarItem[] = [
-  { range: "-5k to -3k", count: 3 },
-  { range: "-3k to -1k", count: 7 },
-  { range: "-1k to 0", count: 12 },
-  { range: "0 to 1k", count: 20 },
-  { range: "1k to 3k", count: 16 },
-  { range: "3k to 5k", count: 8 },
-  { range: "5k+", count: 5 },
-];
+interface Props {
+  loading?: boolean;
+  filters?: any;
+}
 
-export function PnLDistribution({ data, loading = false }: PnLDistributionProps) {
-  const chartData = data && data.length > 0 ? data : MOCK_DATA;
+const TRADE_TYPES = ["intraday", "positional", "investment", "swing", "scalping"];
 
-  const totalTrades = useMemo(
-    () => chartData.reduce((sum, d) => sum + d.count, 0),
-    [chartData]
-  );
-  const profitableTrades = useMemo(
-    () =>
-      chartData
-        .filter((d) => !d.range.startsWith("-"))
-        .reduce((sum, d) => sum + d.count, 0),
-    [chartData]
-  );
-  const winRate =
-    totalTrades > 0 ? ((profitableTrades / totalTrades) * 100).toFixed(1) : "0.0";
+export function PnLDistribution({ loading = false, filters = {} }: Props) {
+  const [data, setData] = useState<TradeTypeDist[]>([]);
+  const [fetching, setFetching] = useState<boolean>(false);
 
-  const topRange = chartData.reduce(
+  useEffect(() => {
+    const load = async () => {
+      setFetching(true);
+      try {
+        const res = await analyticsApi.getDistribution("tradeType", filters);
+        if (Array.isArray(res)) {
+          // Normalize: ensure tradeTypes always ordered consistently
+          const map = new Map(res.map((r: any) => [r._id ?? "unknown", r]));
+          const normalized = TRADE_TYPES.map((type) =>
+            map.get(type) || { _id: type, count: 0, totalPnl: 0, avgPnl: 0, winRate: 0 }
+          );
+          setData(normalized);
+        } else {
+          setData([]);
+        }
+      } catch (err) {
+        console.error("PnLDistribution error:", err);
+        setData([]);
+      } finally {
+        setFetching(false);
+      }
+    };
+    load();
+  }, [JSON.stringify(filters)]);
+
+  const chartData = useMemo(() => {
+    return data.map((item) => ({
+      tradeType: item._id,
+      count: item.count,
+      totalPnl: item.totalPnl,
+      avgPnl: item.avgPnl,
+      winRate: item.winRate,
+    }));
+  }, [data]);
+
+  const totalTrades = chartData.reduce((sum, d) => sum + (d.count ?? 0), 0);
+  const overallWinRate =
+    totalTrades > 0
+      ? (chartData.reduce((s, d) => s + (d.winRate * d.count) / 100, 0) / totalTrades) * 100
+      : 0;
+
+  const topTradeType = chartData.reduce(
     (max, d) => (d.count > max.count ? d : max),
-    chartData[0]
+    chartData[0] || { tradeType: "none", count: 0 }
   );
 
-  const hasProfit = profitableTrades > totalTrades / 2;
+  const coloredData = chartData.map((item) => {
+    let color = "#71717A"; // neutral gray
+    if (item.totalPnl > 0) color = "#10B981"; // green
+    else if (item.totalPnl < 0) color = "#EF4444"; // red
+    return { ...item, color };
+  });
 
-  // bar color mapping: losses = red, gains = green
-  const coloredData = chartData.map((item) => ({
-    ...item,
-    color: item.range.includes("-") ? "#EF4444" : "#10B981",
-  }));
+  const isLoading = loading || fetching;
+
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const p = payload[0].payload;
+    return (
+      <div className="bg-black/90 text-white p-3 rounded-md text-xs shadow-md border border-white/10">
+        <div className="font-semibold mb-1">{p.tradeType}</div>
+        <div>Total Trades: {p.count}</div>
+        <div>Win Rate: {p.winRate.toFixed(1)}%</div>
+        <div>Total P/L: ₹{p.totalPnl.toFixed(2)}</div>
+        <div>Avg P/L: ₹{p.avgPnl.toFixed(2)}</div>
+      </div>
+    );
+  };
 
   return (
     <Card className="border-border/50 bg-card/40 backdrop-blur-xl relative overflow-hidden group hover:border-purple-500/40 transition-all">
-      {/* background gradient */}
+      {/* soft glow bg */}
       <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-pink-500/5 to-orange-500/5 opacity-50 group-hover:opacity-80 transition-opacity" />
-
-      {/* animated glow */}
       <motion.div
         className="absolute -bottom-20 -left-20 h-72 w-72 bg-gradient-to-br from-purple-500/10 to-pink-500/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-700"
         animate={{ scale: [1, 1.15, 1] }}
@@ -85,12 +133,12 @@ export function PnLDistribution({ data, loading = false }: PnLDistributionProps)
               <CardTitle>P/L Distribution</CardTitle>
             </div>
             <CardDescription className="mt-2">
-              Distribution of trades by profit/loss range
+              Distribution of trades by <strong>Trade Type</strong>
             </CardDescription>
           </div>
 
           <div className="text-right">
-            {loading ? (
+            {isLoading ? (
               <Skeleton className="h-5 w-16" />
             ) : (
               <>
@@ -99,12 +147,12 @@ export function PnLDistribution({ data, loading = false }: PnLDistributionProps)
                 </div>
                 <Badge
                   className={`mt-1 ${
-                    hasProfit
+                    overallWinRate >= 50
                       ? "bg-green-500/10 text-green-500 border-green-500/30"
                       : "bg-red-500/10 text-red-500 border-red-500/30"
                   }`}
                 >
-                  {winRate}% Win Rate
+                  {overallWinRate.toFixed(1)}% Win Rate
                 </Badge>
               </>
             )}
@@ -114,24 +162,50 @@ export function PnLDistribution({ data, loading = false }: PnLDistributionProps)
 
       {/* Chart */}
       <CardContent className="relative">
-        {loading ? (
+        {isLoading ? (
           <div className="h-[300px] flex items-center justify-center">
             <Skeleton className="h-40 w-full" />
           </div>
         ) : (
           <>
-            <SimpleBarChart data={coloredData} />
+            <div className="h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={coloredData}
+                  margin={{ top: 20, right: 20, left: 10, bottom: 30 }}
+                  barCategoryGap="25%"
+                >
+                  <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis
+                    dataKey="tradeType"
+                    tick={{ fill: "#aaa", fontSize: 12 }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: "#aaa", fontSize: 12 }}
+                    tickLine={false}
+                    allowDecimals={false}
+                  />
+                  <ReTooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+                  <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                    {coloredData.map((entry, i) => (
+                      <Cell key={`cell-${i}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-            {/* top range indicator */}
-            {topRange && (
+            {/* top trade type summary */}
+            {topTradeType && (
               <div className="flex items-center gap-1 mt-4 text-sm text-muted-foreground">
                 <Trophy className="h-4 w-4 text-yellow-500" />
                 <span>
                   Most trades in{" "}
                   <strong className="text-foreground">
-                    {topRange.range}
+                    {topTradeType.tradeType}
                   </strong>{" "}
-                  ({topRange.count} trades)
+                  ({topTradeType.count} trades)
                 </span>
               </div>
             )}
@@ -141,3 +215,5 @@ export function PnLDistribution({ data, loading = false }: PnLDistributionProps)
     </Card>
   );
 }
+
+export default PnLDistribution;

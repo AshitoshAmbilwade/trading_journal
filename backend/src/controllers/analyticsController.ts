@@ -1,13 +1,9 @@
-// src/controllers/analyticsController.ts
 import type { Request, Response } from "express";
 import { Types } from "mongoose";
 import { TradeModel } from "../models/Trade.js";
 
 /**
  * Analytics controller (keeps aggregations) + added getTrades endpoint
- *
- * - New: getTrades -> returns raw trade documents (filtered by entryDate)
- * - Existing: getSummary, getTimeSeries, getDistribution unchanged
  */
 
 // safe parse ISO-ish dates
@@ -49,10 +45,7 @@ function buildMatch(req: Request, dateField = "tradeDate") {
 // -------------------- NEW: GET RAW TRADES --------------------
 export const getTrades = async (req: Request, res: Response) => {
   try {
-    // use entryDate for filtering per your request
     const match = buildMatch(req, "entryDate");
-
-    // Optional: pagination (if you want) -- not required for analytics chart but helpful
     const q = (req.query as any) || {};
     const limit = q.limit ? Math.max(1, Math.min(1000, Number(q.limit))) : undefined;
     const skip = q.skip ? Math.max(0, Number(q.skip)) : undefined;
@@ -174,7 +167,12 @@ export const getDistribution = async (req: Request, res: Response) => {
     const { by = "segment" } = req.query as any;
 
     const allowed = ["segment", "tradeType", "strategy", "type", "session"];
-    if (!allowed.includes(by)) return res.status(400).json({ message: "Invalid 'by' parameter" });
+    if (!allowed.includes(by)) {
+      return res.status(400).json({ message: "Invalid 'by' parameter" });
+    }
+
+    // Predefined tradeType buckets for consistent ordering
+    const TRADE_TYPES = ["intraday", "positional", "investment", "swing", "scalping"];
 
     const pipeline: any[] = [
       { $match: match },
@@ -182,7 +180,7 @@ export const getDistribution = async (req: Request, res: Response) => {
         $group: {
           _id: `$${by}`,
           count: { $sum: 1 },
-          totalPnl: { $sum: "$pnl" },
+          totalPnl: { $sum: { $ifNull: ["$pnl", 0] } },
           avgPnl: { $avg: "$pnl" },
           winCount: { $sum: { $cond: [{ $gt: ["$pnl", 0] }, 1, 0] } },
         },
@@ -202,11 +200,38 @@ export const getDistribution = async (req: Request, res: Response) => {
           },
         },
       },
-      { $sort: { totalPnl: -1 } },
     ];
 
-    const result = await TradeModel.aggregate(pipeline);
-    res.json(result);
+    const aggResult = await TradeModel.aggregate(pipeline);
+
+    // Ensure all tradeType buckets exist if grouping by tradeType
+    if (by === "tradeType") {
+      const map = new Map<string, any>();
+      aggResult.forEach((r: any) => map.set(String(r._id ?? "Unknown"), r));
+
+      const filled = TRADE_TYPES.map((tt) => {
+        const found = map.get(tt);
+        return (
+          found || {
+            _id: tt,
+            count: 0,
+            totalPnl: 0,
+            avgPnl: 0,
+            winRate: 0,
+          }
+        );
+      });
+
+      // Append unknown ones if any
+      aggResult.forEach((r: any) => {
+        const key = String(r._id ?? "Unknown");
+        if (!TRADE_TYPES.includes(key)) filled.push(r);
+      });
+
+      return res.json(filled);
+    }
+
+    res.json(aggResult);
   } catch (err) {
     console.error("[Analytics] getDistribution error:", err);
     res.status(500).json({ message: "Error computing distribution", error: err });
