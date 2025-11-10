@@ -1,77 +1,136 @@
 // src/api/analytics.ts
 import { fetchApi } from "../utils/apiHandler";
 
-// --- Types ---
+/**
+ * ✅ Frontend Analytics API Client (simplified)
+ * Matches backend routes:
+ *   - GET /api/analytics/summary
+ *   - GET /api/analytics/timeseries
+ *   - GET /api/analytics/distribution
+ *   - GET /api/analytics/trades
+ */
+
+/* --------------------- Types --------------------- */
+
 export interface AnalyticsSummary {
   totalTrades: number;
   totalPnl: number;
   avgPnl: number;
-  winRate: number;
   largestWin: number;
   largestLoss: number;
+  winRate: number; // percent
 }
 
-export interface AnalyticsTimeSeries {
-  _id: string; // date or month string
+export interface AnalyticsTimeSeriesItem {
+  period: string; // "2025-11-01" | "2025-11" | etc.
   totalTrades: number;
   totalPnl: number;
   avgPnl: number;
 }
 
-export interface AnalyticsDistribution {
-  _id: string; // grouping key (segment, strategy, etc.)
+export interface AnalyticsDistributionItem {
+  _id: string | null; // segment | strategy | type | session
   count: number;
   totalPnl: number;
   avgPnl: number;
+  winRate: number;
 }
 
-// --- API Wrapper ---
+/* Trade shape returned by /analytics/trades */
+export interface Trade {
+  _id: string;
+  userId?: string;
+  symbol?: string;
+  type?: string;
+  quantity?: number;
+  price?: number;
+  pnl?: number;
+  segment?: string;
+  tradeType?: string;
+  strategy?: string;
+  session?: string;
+  broker?: string;
+  direction?: string;
+  entryDate?: string; // ISO
+  exitDate?: string; // ISO
+  tradeDate?: string; // ISO (if present)
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: any;
+}
+
+/* --------------------- Filters --------------------- */
+export interface AnalyticsFilters {
+  from?: string;
+  to?: string;
+  segment?: string;
+  tradeType?: string;
+  strategy?: string;
+  symbol?: string;
+  direction?: string;
+  session?: string;
+  broker?: string;
+  interval?: "daily" | "weekly" | "monthly";
+  by?: string;
+  limit?: number;
+  skip?: number;
+}
+
+/* --------------------- API wrapper --------------------- */
+
 export const analyticsApi = {
   /**
-   * Summary statistics
+   * 🔹 1. Summary
    * GET /analytics/summary
    */
-  getSummary: (filters?: {
-    from?: string;
-    to?: string;
-    segment?: string;
-    tradeType?: string;
-    symbol?: string;
-  }): Promise<AnalyticsSummary> => {
-    return fetchApi({
+  getSummary: (filters?: AnalyticsFilters): Promise<AnalyticsSummary> =>
+    fetchApi({
       url: "/analytics/summary",
       method: "GET",
       params: filters,
-    });
-  },
+    }),
 
   /**
-   * Time series stats
-   * GET /analytics/timeseries
+   * 🔹 2. Time-series performance
+   * GET /analytics/timeseries?interval=daily|weekly|monthly
    */
   getTimeSeries: (
-    interval: "daily" | "weekly" | "monthly" = "daily",
-    from?: string,
-    to?: string
-  ): Promise<AnalyticsTimeSeries[]> => {
-    return fetchApi({
+    params?: {
+      interval?: "daily" | "weekly" | "monthly";
+      from?: string;
+      to?: string;
+    }
+  ): Promise<AnalyticsTimeSeriesItem[]> =>
+    fetchApi({
       url: "/analytics/timeseries",
       method: "GET",
-      params: { interval, from, to },
-    });
-  },
+      params,
+    }),
 
   /**
-   * Distribution by segment/tradeType/strategy
-   * GET /analytics/distribution
+   * 🔹 3. Distribution
+   * GET /analytics/distribution?by=segment|tradeType|strategy|session
    */
   getDistribution: (
-    by: "segment" | "tradeType" | "strategy" | "type" = "segment"
-  ): Promise<AnalyticsDistribution[]> => {
-    return fetchApi({
+    by: "segment" | "tradeType" | "strategy" | "type" | "session" = "segment",
+    filters?: AnalyticsFilters
+  ): Promise<AnalyticsDistributionItem[]> =>
+    fetchApi({
       url: "/analytics/distribution",
       method: "GET",
-      params: { by },
-    });
-  },
+      params: { by, ...(filters || {}) },
+    }),
+
+  /**
+   * 🔹 4. Raw trades (per-trade data)
+   * GET /analytics/trades?from=...&to=...&limit=...&skip=...
+   *
+   * Returns: Trade[]
+   */
+  getTrades: (filters?: AnalyticsFilters): Promise<Trade[]> =>
+    fetchApi({
+      url: "/analytics/trades",
+      method: "GET",
+      params: filters,
+    }),
 };

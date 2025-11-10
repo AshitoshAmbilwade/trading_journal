@@ -1,4 +1,3 @@
-// src/components/charts/SimpleLineChart.tsx
 "use client";
 import React from "react";
 
@@ -8,96 +7,124 @@ interface DataPoint {
 }
 
 interface SimpleLineChartProps {
-  data: DataPoint[];
+  data: DataPoint[]; // cumulative pnl series
+}
+
+function smoothPath(points: { x: number; y: number }[]) {
+  if (points.length <= 1) return points.map((p) => `L ${p.x} ${p.y}`).join(" ");
+  // simple quadratic bezier smoothing
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const midX = (prev.x + curr.x) / 2;
+    const midY = (prev.y + curr.y) / 2;
+    d += ` Q ${prev.x} ${prev.y} ${midX} ${midY}`;
+  }
+  const last = points[points.length - 1];
+  d += ` T ${last.x} ${last.y}`;
+  return d;
 }
 
 export function SimpleLineChart({ data }: SimpleLineChartProps) {
   if (!Array.isArray(data) || data.length === 0) {
-    // render a simple empty placeholder
     return (
-      <div className="w-full h-[300px] flex items-center justify-center text-sm text-muted-foreground">
+      <div className="w-full h-[340px] flex items-center justify-center text-sm text-muted-foreground">
         No data
       </div>
     );
   }
 
-  // Defensive: if only one point, render it centered
-  const safeData = data.length === 1 ? [{ ...data[0], date: data[0].date }] : data.slice();
+  // defensive copy
+  const safe = data.slice();
 
-  const maxValue = Math.max(...safeData.map((d) => d.pnl));
-  const minValue = Math.min(...safeData.map((d) => d.pnl));
-  // avoid zero range
+  // compute numeric bounds
+  const values = safe.map((d) => d.pnl);
+  const maxValue = Math.max(...values);
+  const minValue = Math.min(...values);
   const range = maxValue - minValue || 1;
-  const padding = 20;
 
-  // use actual pixel width/height relative coords (these are viewBox units)
-  const width = 100;
-  const height = 80;
+  // viewBox units
+  const width = 1000; // larger for smoother curves
+  const height = 360;
+  const paddingX = 60;
+  const paddingY = 40;
+  const innerW = width - paddingX * 2;
+  const innerH = height - paddingY * 2;
 
-  // when only one point, center it horizontally
-  const points = safeData.map((point, index) => {
-    const denom = safeData.length === 1 ? 1 : safeData.length - 1;
-    const x = safeData.length === 1 ? width / 2 : (index / denom) * width;
-    // clamp pnl to avoid NaN
-    const normalized = (point.pnl - minValue) / range;
-    const y = Math.max(0, Math.min(height - padding / 2, height - normalized * (height - padding)));
-    return { x, y, value: point.pnl };
+  // map points to pixel coords
+  const points = safe.map((pt, i) => {
+    const denom = Math.max(1, safe.length - 1);
+    const x = paddingX + (i / denom) * innerW;
+    const normalized = (pt.pnl - minValue) / range;
+    const y = paddingY + (1 - normalized) * innerH;
+    return { x, y, value: pt.pnl, label: pt.date };
   });
 
-  const pathData = points
-    .map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`))
-    .join(" ");
+  const path = smoothPath(points);
 
-  // compute Y axis labels simple
+  // Y ticks (top, mid, bottom)
   const topLabel = Math.round(maxValue);
+  const midLabel = Math.round((maxValue + minValue) / 2);
   const bottomLabel = Math.round(minValue);
 
-  return (
-    <div className="relative w-full h-[300px] flex items-center justify-center">
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
-        {/* Grid lines */}
-        {[0, 25, 50, 75, 100].map((yPct) => {
-          const y = (yPct / 100) * height;
-          return <line key={yPct} x1="0" y1={y} x2={width} y2={y} stroke="rgba(255,255,255,0.08)" strokeDasharray="2,2" />;
-        })}
+  // X labels: show up to 6 evenly spaced
+  const labelStep = Math.max(1, Math.floor(points.length / 6));
 
+  const gradientId = "lineGradientChart";
+
+  return (
+    <div className="relative w-full h-[340px]">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
         <defs>
-          <linearGradient id="lineGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#0EA5E9" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="#0EA5E9" stopOpacity="0.05" />
+          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.04" />
           </linearGradient>
         </defs>
 
-        {/* Area under curve */}
-        <path d={`${pathData} L ${width} ${height} L 0 ${height} Z`} fill="url(#lineGradient)" />
+        {/* grid horizontal lines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((f, idx) => {
+          const y = paddingY + f * innerH;
+          return <line key={idx} x1={paddingX} x2={paddingX + innerW} y1={y} y2={y} stroke="rgba(255,255,255,0.04)" strokeDasharray="6 6" />;
+        })}
 
-        {/* Line */}
-        <path d={pathData} fill="none" stroke="#0EA5E9" strokeWidth="0.5" strokeLinecap="round" strokeLinejoin="round" />
+        {/* area under curve */}
+        <path d={`${path} L ${paddingX + innerW} ${paddingY + innerH} L ${paddingX} ${paddingY + innerH} Z`} fill={`url(#${gradientId})`} />
 
-        {/* Points */}
-        {points.map((point, index) => (
-          <g key={index}>
-            <circle cx={String(point.x)} cy={String(point.y)} r="0.8" fill="#0EA5E9" className="hover:r-1.5 transition-all cursor-pointer" />
-          </g>
+        {/* line stroke */}
+        <path d={path.replace(/^L /, "L ")} fill="none" stroke="#06b6d4" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* points */}
+        {points.map((p, i) => (
+          <circle key={i} cx={String(p.x)} cy={String(p.y)} r={4} fill="#06b6d4" stroke="rgba(255,255,255,0.06)" />
         ))}
+
+        {/* left axis labels */}
+        <text x={12} y={paddingY + 4} fontSize="12" fill="rgba(255,255,255,0.7)">
+          ₹{topLabel}
+        </text>
+        <text x={12} y={paddingY + innerH / 2 + 4} fontSize="12" fill="rgba(255,255,255,0.45)">
+          ₹{midLabel}
+        </text>
+        <text x={12} y={paddingY + innerH + 4} fontSize="12" fill="rgba(255,255,255,0.35)">
+          ₹{bottomLabel}
+        </text>
       </svg>
 
-      {/* X-axis labels */}
-      <div className="absolute bottom-0 left-0 right-0 flex justify-between px-4 text-xs text-muted-foreground">
-        {safeData.map((d, i) =>
-          // show at most 6 labels, evenly spaced
-          i % Math.max(1, Math.floor(safeData.length / 6)) === 0 ? (
-            <span key={i}>{d.date}</span>
+      {/* X axis labels */}
+      <div className="absolute left-0 right-0 bottom-0 px-6 pb-2 flex justify-between text-xs text-muted-foreground">
+        {points.map((p, i) =>
+          i % labelStep === 0 ? (
+            <span key={i} className="truncate" style={{ maxWidth: `${100 / Math.max(1, Math.floor(points.length / 6))}%` }}>
+              {p.label}
+            </span>
           ) : (
-            <span key={i} />
+            <span key={i} style={{ visibility: "hidden" }}>
+              .
+            </span>
           )
         )}
-      </div>
-
-      {/* Y-axis labels */}
-      <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-xs text-muted-foreground pr-2">
-        <span>₹{topLabel}</span>
-        <span>₹{bottomLabel}</span>
       </div>
     </div>
   );

@@ -1,53 +1,88 @@
+// src/controllers/analyticsController.ts
 import type { Request, Response } from "express";
 import { Types } from "mongoose";
-import {TradeModel}  from "../models/Trade.js";
+import { TradeModel } from "../models/Trade.js";
 
 /**
- * Analytics Controller
- * - Handles performance metrics, charts, and trade distributions
- * - Pure numeric analytics — no AI involved here
+ * Analytics controller (keeps aggregations) + added getTrades endpoint
+ *
+ * - New: getTrades -> returns raw trade documents (filtered by entryDate)
+ * - Existing: getSummary, getTimeSeries, getDistribution unchanged
  */
 
-// Helper: safely parse ISO date
+// safe parse ISO-ish dates
 const parseDate = (v?: string) => {
   if (!v) return undefined;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? undefined : d;
 };
 
-// 🎯 1. SUMMARY ANALYTICS
-// GET /api/analytics/summary
+/**
+ * Build match object from request for general filters.
+ * dateField: which date field to use for the from/to filter (default: tradeDate)
+ */
+function buildMatch(req: Request, dateField = "tradeDate") {
+  const userId = (req as any).user?._id || (req as any).user?.id;
+  const q = (req.query as any) || {};
+  const match: any = {};
+  if (userId) match.userId = new Types.ObjectId(userId);
+
+  const fromDate = parseDate(q.from);
+  const toDate = parseDate(q.to);
+  if (fromDate || toDate) {
+    match[dateField] = {};
+    if (fromDate) match[dateField].$gte = fromDate;
+    if (toDate) match[dateField].$lte = toDate;
+  }
+
+  if (q.segment) match.segment = String(q.segment);
+  if (q.tradeType) match.tradeType = String(q.tradeType);
+  if (q.strategy) match.strategy = String(q.strategy);
+  if (q.symbol) match.symbol = { $regex: new RegExp(String(q.symbol), "i") };
+  if (q.direction) match.direction = String(q.direction);
+  if (q.session) match.session = String(q.session);
+  if (q.broker) match.broker = { $regex: new RegExp(String(q.broker), "i") };
+
+  return match;
+}
+
+// -------------------- NEW: GET RAW TRADES --------------------
+export const getTrades = async (req: Request, res: Response) => {
+  try {
+    // use entryDate for filtering per your request
+    const match = buildMatch(req, "entryDate");
+
+    // Optional: pagination (if you want) -- not required for analytics chart but helpful
+    const q = (req.query as any) || {};
+    const limit = q.limit ? Math.max(1, Math.min(1000, Number(q.limit))) : undefined;
+    const skip = q.skip ? Math.max(0, Number(q.skip)) : undefined;
+
+    const query = TradeModel.find(match).sort({ entryDate: 1 });
+    if (typeof skip === "number") query.skip(skip);
+    if (typeof limit === "number") query.limit(limit);
+
+    const trades = await query.lean().exec();
+    return res.json(trades);
+  } catch (err) {
+    console.error("[Analytics] getTrades error:", err);
+    return res.status(500).json({ message: "Error fetching trades", error: err });
+  }
+};
+
+// -------------------- 1) SUMMARY --------------------
 export const getSummary = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?._id || (req as any).user?.id;
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const match = buildMatch(req);
 
-    const { from, to, segment, tradeType, symbol } = req.query as any;
-
-    const match: any = { userId: new Types.ObjectId(userId) };
-
-    const fromDate = parseDate(from);
-    const toDate = parseDate(to);
-
-    if (fromDate || toDate) {
-      match.tradeDate = {};
-      if (fromDate) match.tradeDate.$gte = fromDate;
-      if (toDate) match.tradeDate.$lte = toDate;
-    }
-
-    if (segment) match.segment = String(segment);
-    if (tradeType) match.tradeType = String(tradeType);
-    if (symbol) match.symbol = { $regex: new RegExp(symbol, "i") };
-
-    const [stats] = await TradeModel.aggregate([
+    const pipeline: any[] = [
       { $match: match },
       {
         $group: {
           _id: null,
           totalTrades: { $sum: 1 },
-          totalPnl: { $sum: { $ifNull: ["$pnl", 0] } },
-          avgPnl: { $avg: { $ifNull: ["$pnl", 0] } },
-          winCount: { $sum: { $cond: [{ $gte: ["$pnl", 0] }, 1, 0] } },
+          totalPnl: { $sum: "$pnl" },
+          avgPnl: { $avg: "$pnl" },
+          winCount: { $sum: { $cond: [{ $gt: ["$pnl", 0] }, 1, 0] } },
           lossCount: { $sum: { $cond: [{ $lt: ["$pnl", 0] }, 1, 0] } },
           largestWin: { $max: "$pnl" },
           largestLoss: { $min: "$pnl" },
@@ -57,107 +92,123 @@ export const getSummary = async (req: Request, res: Response) => {
         $project: {
           _id: 0,
           totalTrades: 1,
-          totalPnl: { $ifNull: ["$totalPnl", 0] },
-          avgPnl: { $ifNull: ["$avgPnl", 0] },
+          totalPnl: { $round: ["$totalPnl", 2] },
+          avgPnl: { $round: ["$avgPnl", 2] },
+          largestWin: { $round: ["$largestWin", 2] },
+          largestLoss: { $round: ["$largestLoss", 2] },
           winRate: {
             $cond: [
               { $eq: ["$totalTrades", 0] },
               0,
-              { $divide: ["$winCount", "$totalTrades"] },
+              { $round: [{ $multiply: [{ $divide: ["$winCount", "$totalTrades"] }, 100] }, 2] },
             ],
           },
-          largestWin: 1,
-          largestLoss: 1,
         },
       },
-    ]);
+    ];
 
-    return res.json(
+    const [stats] = await TradeModel.aggregate(pipeline);
+    res.json(
       stats || {
         totalTrades: 0,
         totalPnl: 0,
         avgPnl: 0,
-        winRate: 0,
         largestWin: 0,
         largestLoss: 0,
+        winRate: 0,
       }
     );
   } catch (err) {
     console.error("[Analytics] getSummary error:", err);
-    res.status(500).json({ message: "Server error", error: (err as any).message });
+    res.status(500).json({ message: "Error computing summary", error: err });
   }
 };
 
-// 🎯 2. TIMESERIES ANALYTICS (for future use)
-// GET /api/analytics/timeseries?interval=daily|weekly|monthly
+// -------------------- 2) TIME SERIES --------------------
 export const getTimeSeries = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?._id || (req as any).user?.id;
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const match = buildMatch(req);
+    const { interval = "daily" } = req.query as any;
 
-    const { interval = "daily", from, to } = req.query as any;
-    const match: any = { userId: new Types.ObjectId(userId) };
+    const format =
+      interval === "monthly"
+        ? "%Y-%m"
+        : interval === "weekly"
+        ? "%Y-%U"
+        : "%Y-%m-%d";
 
-    const fromDate = parseDate(from);
-    const toDate = parseDate(to);
-    if (fromDate || toDate) {
-      match.tradeDate = {};
-      if (fromDate) match.tradeDate.$gte = fromDate;
-      if (toDate) match.tradeDate.$lte = toDate;
-    }
-
-    let dateFormat = "%Y-%m-%d"; // daily
-    if (interval === "weekly") dateFormat = "%Y-%U"; // week number
-    if (interval === "monthly") dateFormat = "%Y-%m";
-
-    const data = await TradeModel.aggregate([
+    const pipeline: any[] = [
       { $match: match },
       {
         $group: {
-          _id: { $dateToString: { format: dateFormat, date: "$tradeDate" } },
+          _id: { $dateToString: { format, date: "$tradeDate" } },
           totalTrades: { $sum: 1 },
           totalPnl: { $sum: "$pnl" },
           avgPnl: { $avg: "$pnl" },
         },
       },
-      { $sort: { _id: 1 } },
-    ]);
+      {
+        $project: {
+          _id: 0,
+          period: "$_id",
+          totalTrades: 1,
+          totalPnl: { $round: ["$totalPnl", 2] },
+          avgPnl: { $round: ["$avgPnl", 2] },
+        },
+      },
+      { $sort: { period: 1 } },
+    ];
 
-    return res.json(data);
+    const result = await TradeModel.aggregate(pipeline);
+    res.json(result);
   } catch (err) {
     console.error("[Analytics] getTimeSeries error:", err);
-    res.status(500).json({ message: "Server error", error: (err as any).message });
+    res.status(500).json({ message: "Error computing time series", error: err });
   }
 };
 
-// 🎯 3. DISTRIBUTION ANALYTICS (future)
-// GET /api/analytics/distribution?by=segment|tradeType|strategy
+// -------------------- 3) DISTRIBUTION --------------------
 export const getDistribution = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?._id || (req as any).user?.id;
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
+    const match = buildMatch(req);
     const { by = "segment" } = req.query as any;
-    const allowed = ["segment", "tradeType", "strategy", "type"];
-    if (!allowed.includes(by))
-      return res.status(400).json({ message: "Invalid 'by' parameter" });
 
-    const data = await TradeModel.aggregate([
-      { $match: { userId: new Types.ObjectId(userId) } },
+    const allowed = ["segment", "tradeType", "strategy", "type", "session"];
+    if (!allowed.includes(by)) return res.status(400).json({ message: "Invalid 'by' parameter" });
+
+    const pipeline: any[] = [
+      { $match: match },
       {
         $group: {
           _id: `$${by}`,
           count: { $sum: 1 },
           totalPnl: { $sum: "$pnl" },
           avgPnl: { $avg: "$pnl" },
+          winCount: { $sum: { $cond: [{ $gt: ["$pnl", 0] }, 1, 0] } },
         },
       },
-      { $sort: { count: -1 } },
-    ]);
+      {
+        $project: {
+          _id: 1,
+          count: 1,
+          totalPnl: { $round: ["$totalPnl", 2] },
+          avgPnl: { $round: ["$avgPnl", 2] },
+          winRate: {
+            $cond: [
+              { $eq: ["$count", 0] },
+              0,
+              { $round: [{ $multiply: [{ $divide: ["$winCount", "$count"] }, 100] }, 2] },
+            ],
+          },
+        },
+      },
+      { $sort: { totalPnl: -1 } },
+    ];
 
-    return res.json(data);
+    const result = await TradeModel.aggregate(pipeline);
+    res.json(result);
   } catch (err) {
     console.error("[Analytics] getDistribution error:", err);
-    res.status(500).json({ message: "Server error", error: (err as any).message });
+    res.status(500).json({ message: "Error computing distribution", error: err });
   }
 };

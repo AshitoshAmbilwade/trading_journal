@@ -1,5 +1,6 @@
 'use client';
 
+
 import { TradeTable } from "@/components/dashboard/TradeTable";
 
 
