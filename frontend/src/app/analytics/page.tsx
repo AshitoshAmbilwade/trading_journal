@@ -1,6 +1,6 @@
 // src/app/analytics/page.tsx
 import React from "react";
-import { AnalyticsShell } from "@/components/analytics";
+import AnalyticsShell from "@/components/analytics/AnalyticsShell";
 
 export const metadata = {
   title: "Analytics • Earnotic",

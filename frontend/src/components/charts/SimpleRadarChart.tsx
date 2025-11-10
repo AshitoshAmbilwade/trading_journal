@@ -1,107 +1,127 @@
-interface DataPoint {
+"use client";
+
+import React, { useMemo } from "react";
+import {
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+type DataItem = {
   strategy: string;
   effectiveness: number;
+  totalPnl?: number;
+};
+
+interface Props {
+  data: DataItem[];
+  height?: number;
 }
 
-interface SimpleRadarChartProps {
-  data: DataPoint[];
+function formatCurrency(v?: number) {
+  if (v == null) return "₹0.00";
+  const sign = v >= 0 ? "" : "-";
+  return `${sign}₹${Math.abs(v).toFixed(2)}`;
 }
 
-export function SimpleRadarChart({ data }: SimpleRadarChartProps) {
-  const centerX = 150;
-  const centerY = 150;
-  const maxRadius = 120;
-  const numPoints = data.length;
-
-  // Calculate polygon points
-  const points = data.map((item, index) => {
-    const angle = (index / numPoints) * 2 * Math.PI - Math.PI / 2;
-    const radius = (item.effectiveness / 100) * maxRadius;
-    return {
-      x: centerX + radius * Math.cos(angle),
-      y: centerY + radius * Math.sin(angle),
-      labelX: centerX + (maxRadius + 30) * Math.cos(angle),
-      labelY: centerY + (maxRadius + 30) * Math.sin(angle),
-      label: item.strategy,
-      value: item.effectiveness,
-    };
-  });
-
-  const polygonPoints = points.map(p => `${p.x},${p.y}`).join(' ');
-
-  // Grid circles
-  const gridCircles = [25, 50, 75, 100];
-
+/** Custom tooltip to show effectiveness + totalPnl (with white text) */
+function RadarTooltip({ active, payload }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload as DataItem;
   return (
-    <div className="w-full h-[300px] flex items-center justify-center">
-      <svg viewBox="0 0 300 300" className="w-full h-full max-w-[300px]">
-        {/* Grid circles */}
-        {gridCircles.map((percent) => (
-          <circle
-            key={percent}
-            cx={centerX}
-            cy={centerY}
-            r={(percent / 100) * maxRadius}
-            fill="none"
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth="1"
-          />
-        ))}
-
-        {/* Grid lines */}
-        {points.map((point, index) => (
-          <line
-            key={index}
-            x1={centerX}
-            y1={centerY}
-            x2={point.labelX}
-            y2={point.labelY}
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth="1"
-          />
-        ))}
-
-        {/* Data polygon */}
-        <defs>
-          <linearGradient id="radarGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.6" />
-            <stop offset="100%" stopColor="#ec4899" stopOpacity="0.3" />
-          </linearGradient>
-        </defs>
-        <polygon
-          points={polygonPoints}
-          fill="url(#radarGradient)"
-          stroke="#8b5cf6"
-          strokeWidth="2"
-        />
-
-        {/* Data points */}
-        {points.map((point, index) => (
-          <circle
-            key={index}
-            cx={point.x}
-            cy={point.y}
-            r="4"
-            fill="#8b5cf6"
-            className="hover:r-6 transition-all cursor-pointer"
-          />
-        ))}
-
-        {/* Labels */}
-        {points.map((point, index) => (
-          <text
-            key={index}
-            x={point.labelX}
-            y={point.labelY}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            className="text-xs fill-muted-foreground"
-            fontSize="11"
-          >
-            {point.label}
-          </text>
-        ))}
-      </svg>
+    <div
+      style={{
+        background: "rgba(15,15,20,0.95)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        color: "#fff",
+        padding: "10px 12px",
+        borderRadius: 8,
+        fontSize: 13,
+        minWidth: 180,
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{`Strategy: ${p.strategy}`}</div>
+      <div style={{ fontSize: 13, marginBottom: 4 }}>
+        <span style={{ color: "#9AE6B4", fontWeight: 600 }}>Effectiveness: </span>
+        <span style={{ color: "#fff" }}>{`${Number(p.effectiveness ?? 0)}%`}</span>
+      </div>
+      <div style={{ fontSize: 13 }}>
+        <span style={{ color: "#60A5FA", fontWeight: 600 }}>Total P/L: </span>
+        <span style={{ color: Number(p.totalPnl ?? 0) >= 0 ? "#34D399" : "#FB7185", fontWeight: 600 }}>
+          {formatCurrency(p.totalPnl)}
+        </span>
+      </div>
     </div>
   );
 }
+
+export function SimpleRadarChart({ data, height = 500 }: Props) {
+  const chartData = useMemo(
+    () =>
+      (data || []).map((d) => ({
+        strategy: String(d.strategy ?? "Unknown"),
+        effectiveness: Number(d.effectiveness ?? 0),
+        totalPnl: typeof d.totalPnl === "number" ? Number(d.totalPnl) : undefined,
+      })),
+    [data]
+  );
+
+  const strokeColor = "#8B5CF6";
+
+  return (
+    <div className="w-full" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <RadarChart
+          cx="50%"            // perfect center
+          cy="50%"            // slightly lower for balanced composition
+          outerRadius="110%"   // 🔥 increased radius
+          data={chartData}
+          margin={{ top: 20, right: 70, left: 70, bottom: 20 }}
+        >
+          <PolarGrid stroke="rgba(255,255,255,0.06)" />
+          <PolarAngleAxis
+            dataKey="strategy"
+            tick={({ x, y, payload }: any) => (
+              <text
+                x={x}
+                y={y}
+                textAnchor="middle"
+                fill="#f8fafc"
+                fontSize={14}
+                fontWeight={600}
+                style={{ textShadow: "0 0 6px rgba(0,0,0,0.6)" }}
+              >
+                {payload?.value}
+              </text>
+            )}
+          />
+          <PolarRadiusAxis tick={false} axisLine={false} stroke="rgba(255,255,255,0.04)" />
+          <defs>
+            <linearGradient id="radarGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.85} />
+              <stop offset="100%" stopColor="#06B6D4" stopOpacity={0.28} />
+            </linearGradient>
+          </defs>
+
+          <Radar
+            name="Effectiveness"
+            dataKey="effectiveness"
+            stroke={strokeColor}
+            strokeWidth={2}
+            fill="url(#radarGradient)"
+            fillOpacity={0.65}
+            dot={{ r: 4, fill: "#fff", stroke: "rgba(0,0,0,0.15)" }}
+          />
+
+          <Tooltip content={<RadarTooltip />} />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export default SimpleRadarChart;
