@@ -184,10 +184,6 @@ export default function AnalyticsShell() {
     return { from: range.from, to: range.to };
   }, [interval, customRange]);
 
-  const exportData = () => {
-    // Export functionality placeholder
-    console.log("Export analytics data");
-  };
 
   return (
     <div className="min-h-screen bg-background/50 p-6 space-y-8">

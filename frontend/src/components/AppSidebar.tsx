@@ -34,6 +34,7 @@ interface User {
   role?: string;
 }
 
+// Updated navItems: Trading Lab points to /trading-lab/strategies
 const navItems = [
   {
     icon: Home,
@@ -53,6 +54,12 @@ const navItems = [
     label: "Reports",
     path: "/reports",
     gradient: "from-orange-500 to-yellow-500",
+  },
+  {
+    icon: TrendingUp,
+    label: "Trading Lab",
+    path: "/trading-lab/strategies", // <-- parent entry links to initial subpage
+    gradient: "from-green-500 to-emerald-600",
   },
   {
     icon: Award,
@@ -84,20 +91,19 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
   const [loadingUser, setLoadingUser] = useState(true);
 
   useEffect(() => {
-  const fetchUser = async () => {
-    try {
-      const res = await authApi.getMe();
-      console.log("User API response:", res); // should log the full object
-      if (res?.user) setUser(res.user);      // ✅ use res.user instead of res.data
-    } catch (err) {
-      console.error("Failed to fetch user:", err);
-    } finally {
-      setLoadingUser(false);
-    }
-  };
-  fetchUser();
-}, []);
-
+    const fetchUser = async () => {
+      try {
+        const res = await authApi.getMe();
+        console.log("User API response:", res);
+        if (res?.user) setUser(res.user);
+      } catch (err) {
+        console.error("Failed to fetch user:", err);
+      } finally {
+        setLoadingUser(false);
+      }
+    };
+    fetchUser();
+  }, []);
 
   useEffect(() => {
     const checkWidth = () => setIsDesktop(window.innerWidth >= 1024);
@@ -169,9 +175,7 @@ export function AppSidebar({ isOpen, onClose }: AppSidebarProps) {
                 {loadingUser ? "Loading..." : user?.name}
               </p>
               <p className="text-xs text-muted-foreground truncate">
-                {loadingUser
-                  ? "..."
-                  : `${user?.tier || "Free"} • ${user?.email}`}
+                {loadingUser ? "..." : `${user?.tier || "Free"} • ${user?.email}`}
               </p>
             </div>
             <Sparkles className="h-4 w-4 text-yellow-500" />

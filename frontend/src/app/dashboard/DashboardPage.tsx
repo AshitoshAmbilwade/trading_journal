@@ -8,6 +8,7 @@ import { Reports } from "./Reports";
 import { Settings } from "./Settings";
 // Analytics import (index.ts in components/analytics exports AnalyticsShell as default export)
 import { AnalyticsShell } from "../../components/analytics";
+import TradingLabStrategiesPage from "./../trading-lab/strategies/page"; // <-- NEW: Trading Lab - Strategies page
 
 const pageVariants = {
   initial: { opacity: 0, y: 20 },
@@ -67,6 +68,21 @@ function AppRoutes() {
             <Reports />
           </motion.div>
         )}
+
+        {/* TRADING LAB -> STRATEGIES route */}
+        {currentPath === "/trading-lab/strategies" && (
+          <motion.div
+            key="trading-lab-strategies"
+            variants={pageVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={pageTransition}
+          >
+            <TradingLabStrategiesPage />
+          </motion.div>
+        )}
+
         {currentPath === "/settings" && (
           <motion.div
             key="settings"

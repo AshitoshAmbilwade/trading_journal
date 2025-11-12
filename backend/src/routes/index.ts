@@ -4,7 +4,8 @@ import tradesRoutes from "./trades.js";
 import aiRoutes from "./ai.js";
 import exportLogRoutes from "./exportLogRoutes.js";
 import gamificationRoutes from "./gamificationRoutes.js";
-import analyticsRoutes from "./analytics.js"; // ✅ added
+import analyticsRoutes from "./analytics.js"; 
+import strategyRoutes from "./strategyRoutes.js";
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use("/ai-summaries", aiRoutes);
 router.use("/export-logs", exportLogRoutes);
 router.use("/gamification", gamificationRoutes);
 router.use("/analytics", analyticsRoutes); 
+router.use("/strategies", strategyRoutes);
 
 export default router;
