@@ -1,10 +1,11 @@
 // src/components/dashboard/TradeTable.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { tradesApi, Trade } from "../../api/trades";
+import strategiesApi, { Strategy } from "@/api/strategies";
 import {
   Search,
   Filter,
@@ -19,6 +20,9 @@ import {
   X,
   FileText,
   TableIcon,
+  Calendar as CalendarIcon,
+  ChevronDown,
+  BarChart3,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
@@ -47,18 +51,19 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
+/* ---------------- Helpers ---------------- */
+
 function extractImageString(img: any): string {
   if (!img) return "";
   if (typeof img === "string") return img;
   if (typeof File !== "undefined" && img instanceof File) return "";
   if (typeof img === "object") {
     const keys = ["path", "secure_url", "url", "location", "filename", "public_id"];
-    for (const k of keys) if (img[k]) return String(img[k]);
+    for (const k of keys) if ((img as any)[k]) return String((img as any)[k]);
   }
   return "";
 }
 
-// Calculate P&L based on entry price, exit price, quantity, type, and brokerage
 const calculatePnL = (
   type: "Buy" | "Sell",
   entryPrice: number,
@@ -67,29 +72,25 @@ const calculatePnL = (
   brokerage: number = 0
 ): number => {
   if (!entryPrice || !exitPrice || !quantity) return 0;
-  
+
   let grossPnL = 0;
-  
+
   if (type === "Buy") {
-    // For Buy: Profit = (Exit - Entry) * Quantity
     grossPnL = (exitPrice - entryPrice) * quantity;
   } else {
-    // For Sell: Profit = (Entry - Exit) * Quantity  
     grossPnL = (entryPrice - exitPrice) * quantity;
   }
-  
-  // Subtract brokerage
+
   const netPnL = grossPnL - brokerage;
   return Number(netPnL.toFixed(2));
 };
 
-// Export functions
-const exportToCSV = (trades: Trade[]) => {
+const exportCsvFromTrades = (trades: Trade[]) => {
   const headers = [
-    "Symbol", "Type", "Quantity", "Entry Price", "Exit Price", "P/L", "Brokerage", 
-    "Trade Date", "Entry Date", "Exit Date", "Broker", "Strategy", 
+    "Symbol", "Type", "Quantity", "Entry Price", "Exit Price", "P/L", "Brokerage",
+    "Trade Date", "Entry Date", "Exit Date", "Broker", "Strategy",
     "Session", "Segment", "Trade Type", "Direction", "Chart Timeframe",
-    "Entry Condition", "Exit Condition", "Source", "Entry Note", 
+    "Entry Condition", "Exit Condition", "Source", "Entry Note",
     "Exit Note", "Remark", "Notes"
   ].join(',');
 
@@ -99,7 +100,7 @@ const exportToCSV = (trades: Trade[]) => {
     trade.quantity,
     trade.entryPrice,
     trade.exitPrice || '',
-    trade.pnl || '',
+    (trade as any).pnl || '',
     trade.brokerage || '',
     trade.tradeDate,
     trade.entryDate || '',
@@ -117,7 +118,7 @@ const exportToCSV = (trades: Trade[]) => {
     `"${(trade.entryNote || '').replace(/"/g, '""')}"`,
     `"${(trade.exitNote || '').replace(/"/g, '""')}"`,
     `"${(trade.remark || '').replace(/"/g, '""')}"`,
-    `"${(trade.notes || '').replace(/"/g, '""')}"`
+    `"${(trade.notes || '').replace(/"/g, '""')}"`,
   ].join(','));
 
   const csv = [headers, ...data].join('\n');
@@ -130,7 +131,7 @@ const exportToCSV = (trades: Trade[]) => {
   URL.revokeObjectURL(url);
 };
 
-const exportToJSON = (trades: Trade[]) => {
+const exportJsonFromTrades = (trades: Trade[]) => {
   const data = JSON.stringify(trades, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -140,6 +141,8 @@ const exportToJSON = (trades: Trade[]) => {
   link.click();
   URL.revokeObjectURL(url);
 };
+
+/* ---------------- Component ---------------- */
 
 export function TradeTable() {
   const router = useRouter();
@@ -154,7 +157,12 @@ export function TradeTable() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // Enhanced filter states for all entities
+  // Export states
+  const [exportCustomOpen, setExportCustomOpen] = useState(false);
+  const [exportStart, setExportStart] = useState<string>("");
+  const [exportEnd, setExportEnd] = useState<string>("");
+
+  // Enhanced filter states
   const [filters, setFilters] = useState({
     symbol: "",
     type: "all",
@@ -185,38 +193,67 @@ export function TradeTable() {
     status: "all",
   });
 
-  const [newTrade, setNewTrade] = useState<Partial<Trade>>({
+  // Strategies state
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [localStrategies, setLocalStrategies] = useState<string[]>([]);
+  const [loadingStrategies, setLoadingStrategies] = useState(false);
+
+  const todayDateStr = (() => new Date().toISOString().split("T")[0])();
+
+  // Default new trade state
+  const defaultNewTrade: Partial<Trade> = {
     symbol: "",
     type: "Buy",
     quantity: 0,
     entryPrice: 0,
     exitPrice: undefined,
     brokerage: 0,
-    tradeDate: new Date().toISOString(),
-    entryDate: undefined,
-    exitDate: undefined,
+    tradeDate: todayDateStr,
+    entryDate: todayDateStr,
+    exitDate: todayDateStr,
     source: "manual",
     image: "",
-  });
+    strategy: "",
+  };
 
-  // Calculate P&L whenever relevant fields change
+  const [newTrade, setNewTrade] = useState<Partial<Trade>>(defaultNewTrade);
+
+  const strategyInputRef = useRef<HTMLInputElement | null>(null);
+  const tradeDateRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // Calculate P&L
   const calculatedPnL = calculatePnL(
-    newTrade.type || "Buy",
-    newTrade.entryPrice || 0,
-    newTrade.exitPrice,
-    newTrade.quantity || 0,
-    newTrade.brokerage || 0
+    (newTrade.type as "Buy" | "Sell") || "Buy",
+    Number(newTrade.entryPrice || 0),
+    newTrade.exitPrice === undefined ? undefined : Number(newTrade.exitPrice),
+    Number(newTrade.quantity || 0),
+    Number(newTrade.brokerage || 0)
   );
 
+  // Load data
   useEffect(() => {
     loadTrades();
+    loadStrategies();
   }, []);
+
+  const loadStrategies = async () => {
+    try {
+      setLoadingStrategies(true);
+      const data = await strategiesApi.getStrategies();
+      setStrategies(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("[TradeTable] loadStrategies error:", err);
+      setStrategies([]);
+    } finally {
+      setLoadingStrategies(false);
+    }
+  };
 
   const loadTrades = async () => {
     try {
       setLoading(true);
       const data = await tradesApi.getAll();
-      const loaded = Array.isArray(data) ? data : data?.trades || [];
+      const loaded = Array.isArray(data) ? data : (data && (data as any).trades) || [];
       const normalized: Trade[] = loaded.map((t: any) => ({
         ...t,
         tradeDate: t.tradeDate ? new Date(t.tradeDate).toISOString() : new Date().toISOString(),
@@ -233,6 +270,7 @@ export function TradeTable() {
     }
   };
 
+  // Image handling
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -251,16 +289,26 @@ export function TradeTable() {
     setImageUrl("");
   };
 
+  // Trade operations
+  const resetForm = useCallback(() => {
+    setNewTrade(defaultNewTrade);
+    setEditingTrade(null);
+    setImageUrl("");
+  }, []);
+
   const handleSaveTrade = async () => {
     if (saving) return;
     setSaving(true);
 
     try {
-      if (!newTrade.symbol || !newTrade.quantity || !newTrade.entryPrice) {
+      if (!newTrade.symbol?.trim() || !newTrade.quantity || !newTrade.entryPrice) {
         alert("Symbol, Quantity, and Entry Price are required.");
         setSaving(false);
         return;
       }
+
+      const toIsoFromDateStr = (d?: any) =>
+        d ? new Date(`${String(d).split("T")[0]}T00:00:00`).toISOString() : undefined;
 
       const payload: Partial<Trade> = {
         ...newTrade,
@@ -268,13 +316,11 @@ export function TradeTable() {
         entryPrice: Number(newTrade.entryPrice),
         exitPrice: newTrade.exitPrice ? Number(newTrade.exitPrice) : undefined,
         brokerage: Number(newTrade.brokerage) || 0,
-        tradeDate: new Date(newTrade.tradeDate || new Date()).toISOString(),
-        entryDate: newTrade.entryDate ? new Date(newTrade.entryDate).toISOString() : undefined,
-        exitDate: newTrade.exitDate ? new Date(newTrade.exitDate).toISOString() : undefined,
+        tradeDate: toIsoFromDateStr(newTrade.tradeDate) || new Date().toISOString(),
+        entryDate: toIsoFromDateStr(newTrade.entryDate),
+        exitDate: toIsoFromDateStr(newTrade.exitDate),
       };
 
-      // P&L will be calculated automatically by the backend based on the prices
-      // Remove pnl from payload since backend calculates it
       delete (payload as any).pnl;
 
       if (payload.image && typeof payload.image === "object" && !(payload.image instanceof File)) {
@@ -287,27 +333,14 @@ export function TradeTable() {
         image: payload.image instanceof File ? "[File]" : payload.image,
       });
 
-      if (editingTrade) await tradesApi.update(editingTrade._id!, payload as Trade);
-      else await tradesApi.create(payload as Trade);
+      if (editingTrade) {
+        await tradesApi.update(editingTrade._id!, payload as Trade);
+      } else {
+        await tradesApi.create(payload as Trade);
+      }
 
-      // Reset form and reload
       setModalOpen(false);
-      setEditingTrade(null);
-      setImageUrl("");
-      setNewTrade({
-        symbol: "",
-        type: "Buy",
-        quantity: 0,
-        entryPrice: 0,
-        exitPrice: undefined,
-        brokerage: 0,
-        tradeDate: new Date().toISOString(),
-        entryDate: undefined,
-        exitDate: undefined,
-        source: "manual",
-        image: "",
-      });
-
+      resetForm();
       await loadTrades();
     } catch (err: any) {
       console.error("[TradeTable] Save failed:", err);
@@ -320,12 +353,14 @@ export function TradeTable() {
   const handleEditTrade = (trade: Trade) => {
     const img = extractImageString(trade.image ?? (trade as any).images?.[0] ?? "");
     setEditingTrade(trade);
+    const getDateStr = (iso?: string) => (iso ? iso.split("T")[0] : todayDateStr);
     setNewTrade({
       ...trade,
       image: img,
-      tradeDate: trade.tradeDate ? new Date(trade.tradeDate).toISOString() : new Date().toISOString(),
-      entryDate: trade.entryDate ? new Date(trade.entryDate).toISOString() : undefined,
-      exitDate: trade.exitDate ? new Date(trade.exitDate).toISOString() : undefined,
+      tradeDate: getDateStr(trade.tradeDate as any),
+      entryDate: trade.entryDate ? getDateStr(trade.entryDate as any) : todayDateStr,
+      exitDate: trade.exitDate ? getDateStr(trade.exitDate as any) : todayDateStr,
+      strategy: trade.strategy ?? "",
     });
     setImageUrl(img);
     setModalOpen(true);
@@ -342,17 +377,93 @@ export function TradeTable() {
     }
   };
 
-  const handleExport = async (format: 'csv' | 'json') => {
+  // Filtering and export
+  const computeFilteredTrades = useCallback((): Trade[] => {
+    return trades.filter((trade) => {
+      const s = searchTerm.toLowerCase();
+      const matchesSearch = searchTerm === "" ||
+        (trade.symbol || "").toLowerCase().includes(s) ||
+        (trade.broker || "").toLowerCase().includes(s) ||
+        (trade.strategy || "").toLowerCase().includes(s) ||
+        (trade.segment || "").toLowerCase().includes(s) ||
+        (trade.tradeType || "").toLowerCase().includes(s) ||
+        (trade.direction || "").toLowerCase().includes(s) ||
+        (trade.entryCondition || "").toLowerCase().includes(s) ||
+        (trade.exitCondition || "").toLowerCase().includes(s) ||
+        (trade.entryNote || "").toLowerCase().includes(s) ||
+        (trade.exitNote || "").toLowerCase().includes(s) ||
+        (trade.remark || "").toLowerCase().includes(s) ||
+        (trade.notes || "").toLowerCase().includes(s);
+
+      const matchesSymbol = !filters.symbol || (trade.symbol || "").toLowerCase().includes(filters.symbol.toLowerCase());
+      const matchesType = filters.type === "all" || trade.type === filters.type;
+      const matchesQuantity = (!filters.quantityMin || Number(trade.quantity) >= Number(filters.quantityMin)) &&
+        (!filters.quantityMax || Number(trade.quantity) <= Number(filters.quantityMax));
+      const matchesEntryPrice = (!filters.entryPriceMin || Number(trade.entryPrice) >= Number(filters.entryPriceMin)) &&
+        (!filters.entryPriceMax || Number(trade.entryPrice) <= Number(filters.entryPriceMax));
+      const matchesExitPrice = (!filters.exitPriceMin || (trade.exitPrice && Number(trade.exitPrice) >= Number(filters.exitPriceMin))) &&
+        (!filters.exitPriceMax || (trade.exitPrice && Number(trade.exitPrice) <= Number(filters.exitPriceMax)));
+      const matchesPnl = (!filters.pnlMin || Number((trade as any).pnl) >= Number(filters.pnlMin)) &&
+        (!filters.pnlMax || Number((trade as any).pnl) <= Number(filters.pnlMax));
+      const matchesBroker = !filters.broker || (trade.broker || "").toLowerCase().includes(filters.broker.toLowerCase());
+      const matchesStrategy = !filters.strategy || (trade.strategy || "").toLowerCase().includes(filters.strategy.toLowerCase());
+      const matchesSession = filters.session === "all" || trade.session === filters.session;
+      const matchesSegment = filters.segment === "all" || trade.segment === filters.segment;
+      const matchesTradeType = filters.tradeType === "all" || trade.tradeType === filters.tradeType;
+      const matchesDirection = filters.direction === "all" || trade.direction === filters.direction;
+      const matchesChartTimeframe = !filters.chartTimeframe || (trade.chartTimeframe || "").toLowerCase().includes(filters.chartTimeframe.toLowerCase());
+      const matchesEntryCondition = filters.entryCondition === "all" || trade.entryCondition === filters.entryCondition;
+      const matchesExitCondition = filters.exitCondition === "all" || trade.exitCondition === filters.exitCondition;
+      const matchesSource = filters.source === "all" || trade.source === filters.source;
+
+      const tradeDate = new Date(trade.tradeDate);
+      const matchesTradeDate = (!filters.tradeDateFrom || tradeDate >= new Date(filters.tradeDateFrom)) &&
+        (!filters.tradeDateTo || tradeDate <= new Date(filters.tradeDateTo + 'T23:59:59'));
+
+      const entryDate = trade.entryDate ? new Date(trade.entryDate) : null;
+      const matchesEntryDate = (!filters.entryDateFrom || (entryDate && entryDate >= new Date(filters.entryDateFrom))) &&
+        (!filters.entryDateTo || (entryDate && entryDate <= new Date(filters.entryDateTo + 'T23:59:59')));
+
+      const exitDate = trade.exitDate ? new Date(trade.exitDate) : null;
+      const matchesExitDate = (!filters.exitDateFrom || (exitDate && exitDate >= new Date(filters.exitDateFrom))) &&
+        (!filters.exitDateTo || (exitDate && exitDate <= new Date(filters.exitDateTo + 'T23:59:59')));
+
+      const matchesStatus = filters.status === "all" ||
+        (filters.status === "active" && !trade.exitPrice) ||
+        (filters.status === "closed" && trade.exitPrice);
+
+      return matchesSearch && matchesSymbol && matchesType && matchesQuantity && matchesEntryPrice &&
+        matchesExitPrice && matchesPnl && matchesBroker && matchesStrategy && matchesSession && matchesSegment &&
+        matchesTradeType && matchesDirection && matchesChartTimeframe && matchesEntryCondition &&
+        matchesExitCondition && matchesSource && matchesTradeDate && matchesEntryDate &&
+        matchesExitDate && matchesStatus;
+    });
+  }, [trades, searchTerm, filters]);
+
+  const handleExport = async (format: 'csv' | 'json', range: 'all' | 'last7' | 'last30' | 'custom' = 'all') => {
     setExporting(true);
     try {
-      switch (format) {
-        case 'csv':
-          exportToCSV(filteredTrades);
-          break;
-        case 'json':
-          exportToJSON(filteredTrades);
-          break;
+      const base = computeFilteredTrades();
+      let toExport = base.slice();
+
+      const today = new Date();
+      const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      if (range === 'last7') {
+        const s = new Date(startOf(today));
+        s.setDate(s.getDate() - 6);
+        toExport = base.filter(t => new Date(t.tradeDate) >= s && new Date(t.tradeDate) <= new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59));
+      } else if (range === 'last30') {
+        const s = new Date(startOf(today));
+        s.setDate(s.getDate() - 29);
+        toExport = base.filter(t => new Date(t.tradeDate) >= s && new Date(t.tradeDate) <= new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59));
+      } else if (range === 'custom') {
+        setExportCustomOpen(true);
+        setExporting(false);
+        return;
       }
+
+      if (format === 'csv') exportCsvFromTrades(toExport);
+      else exportJsonFromTrades(toExport);
     } catch (err) {
       console.error('Export failed:', err);
       alert('Export failed. Please try again.');
@@ -361,69 +472,42 @@ export function TradeTable() {
     }
   };
 
-  // Enhanced search and filter for all entities
-  const filteredTrades = trades.filter((trade) => {
-    // Search term across all text fields
-    const matchesSearch = searchTerm === "" || 
-      trade.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.broker?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.strategy?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.segment?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.tradeType?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.direction?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.entryCondition?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.exitCondition?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.entryNote?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.exitNote?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.remark?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trade.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+  const doCustomExport = (format: 'csv' | 'json') => {
+    if (!exportStart || !exportEnd) {
+      alert("Pick both start and end dates for custom export.");
+      return;
+    }
+    const s = new Date(`${exportStart}T00:00:00`);
+    const e = new Date(`${exportEnd}T23:59:59`);
+    if (s > e) {
+      alert("Start date must be before or equal to end date.");
+      return;
+    }
+    const base = computeFilteredTrades();
+    const toExport = base.filter(t => {
+      const td = new Date(t.tradeDate);
+      return td >= s && td <= e;
+    });
 
-    // Individual field filters
-    const matchesSymbol = !filters.symbol || trade.symbol?.toLowerCase().includes(filters.symbol.toLowerCase());
-    const matchesType = filters.type === "all" || trade.type === filters.type;
-    const matchesQuantity = (!filters.quantityMin || Number(trade.quantity) >= Number(filters.quantityMin)) &&
-                          (!filters.quantityMax || Number(trade.quantity) <= Number(filters.quantityMax));
-    const matchesEntryPrice = (!filters.entryPriceMin || Number(trade.entryPrice) >= Number(filters.entryPriceMin)) &&
-                        (!filters.entryPriceMax || Number(trade.entryPrice) <= Number(filters.entryPriceMax));
-    const matchesExitPrice = (!filters.exitPriceMin || (trade.exitPrice && Number(trade.exitPrice) >= Number(filters.exitPriceMin))) &&
-                           (!filters.exitPriceMax || (trade.exitPrice && Number(trade.exitPrice) <= Number(filters.exitPriceMax)));
-    const matchesPnl = (!filters.pnlMin || Number((trade as any).pnl) >= Number(filters.pnlMin)) &&
-                      (!filters.pnlMax || Number((trade as any).pnl) <= Number(filters.pnlMax));
-    const matchesBroker = !filters.broker || trade.broker?.toLowerCase().includes(filters.broker.toLowerCase());
-    const matchesStrategy = !filters.strategy || trade.strategy?.toLowerCase().includes(filters.strategy.toLowerCase());
-    const matchesSession = filters.session === "all" || trade.session === filters.session;
-    const matchesSegment = filters.segment === "all" || trade.segment === filters.segment;
-    const matchesTradeType = filters.tradeType === "all" || trade.tradeType === filters.tradeType;
-    const matchesDirection = filters.direction === "all" || trade.direction === filters.direction;
-    const matchesChartTimeframe = !filters.chartTimeframe || trade.chartTimeframe?.toLowerCase().includes(filters.chartTimeframe.toLowerCase());
-    const matchesEntryCondition = filters.entryCondition === "all" || trade.entryCondition === filters.entryCondition;
-    const matchesExitCondition = filters.exitCondition === "all" || trade.exitCondition === filters.exitCondition;
-    const matchesSource = filters.source === "all" || trade.source === filters.source;
+    if (format === 'csv') exportCsvFromTrades(toExport);
+    else exportJsonFromTrades(toExport);
 
-    // Date filters
-    const tradeDate = new Date(trade.tradeDate);
-    const matchesTradeDate = (!filters.tradeDateFrom || tradeDate >= new Date(filters.tradeDateFrom)) &&
-                           (!filters.tradeDateTo || tradeDate <= new Date(filters.tradeDateTo + 'T23:59:59'));
+    setExportCustomOpen(false);
+    setExportStart("");
+    setExportEnd("");
+  };
 
-    const entryDate = trade.entryDate ? new Date(trade.entryDate) : null;
-    const matchesEntryDate = (!filters.entryDateFrom || (entryDate && entryDate >= new Date(filters.entryDateFrom))) &&
-                           (!filters.entryDateTo || (entryDate && entryDate <= new Date(filters.entryDateTo + 'T23:59:59')));
+  // Strategy handling
+  const onStrategyInputChange = (val: string) => {
+    if (val === "+ Add new strategy...") {
+      setNewTrade(prev => ({ ...prev, strategy: "" }));
+      setTimeout(() => strategyInputRef.current?.focus(), 20);
+      return;
+    }
+    setNewTrade(prev => ({ ...prev, strategy: val }));
+  };
 
-    const exitDate = trade.exitDate ? new Date(trade.exitDate) : null;
-    const matchesExitDate = (!filters.exitDateFrom || (exitDate && exitDate >= new Date(filters.exitDateFrom))) &&
-                          (!filters.exitDateTo || (exitDate && exitDate <= new Date(filters.exitDateTo + 'T23:59:59')));
-
-    // Status filter
-    const matchesStatus = filters.status === "all" || 
-                         (filters.status === "active" && !trade.exitPrice) ||
-                         (filters.status === "closed" && trade.exitPrice);
-
-    return matchesSearch && matchesSymbol && matchesType && matchesQuantity && matchesEntryPrice && 
-           matchesExitPrice && matchesPnl && matchesBroker && matchesStrategy && matchesSession && matchesSegment &&
-           matchesTradeType && matchesDirection && matchesChartTimeframe && matchesEntryCondition &&
-           matchesExitCondition && matchesSource && matchesTradeDate && matchesEntryDate &&
-           matchesExitDate && matchesStatus;
-  });
+  const filteredTrades = computeFilteredTrades();
 
   const clearFilters = () => {
     setFilters({
@@ -474,294 +558,408 @@ export function TradeTable() {
     }).format(value);
   };
 
-  const activeFiltersCount = Object.values(filters).filter(val => 
+  const activeFiltersCount = Object.values(filters).filter(val =>
     val !== "" && val !== "all"
   ).length;
 
+  // Stats calculation
+  const totalPnL = filteredTrades.reduce((sum, trade) => sum + Number((trade as any).pnl || 0), 0);
+  const winningTrades = filteredTrades.filter(trade => Number((trade as any).pnl || 0) > 0).length;
+  const winRate = filteredTrades.length > 0 ? (winningTrades / filteredTrades.length) * 100 : 0;
+
   return (
-    <Card className="border border-gray-700 bg-black/80 backdrop-blur-xl hover:border-cyan-500/40 transition-all">
-      <CardHeader>
-        <div className="flex flex-col sm:flex-row justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
-                <TrendingUp className="h-4 w-4 text-white" />
+    <Card className="border border-gray-700 bg-black/80 backdrop-blur-xl hover:border-cyan-500/40 transition-all duration-300">
+      <CardHeader className="pb-4">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg">
+                <BarChart3 className="h-5 w-5 text-white" />
               </div>
-              <CardTitle className="text-white">Trade Journal</CardTitle>
+              <div>
+                <CardTitle className="text-white text-xl font-bold">Trade Journal</CardTitle>
+                <p className="text-sm text-gray-400 mt-1">
+                  Manage and analyze your trading performance
+                </p>
+              </div>
             </div>
-            <p className="text-sm text-gray-400 mt-2">
-              {filteredTrades.length} {filteredTrades.length === 1 ? 'trade' : 'trades'} found
-              {activeFiltersCount > 0 && ` • ${activeFiltersCount} filter${activeFiltersCount === 1 ? '' : 's'} active`}
-            </p>
+            
+            {/* Stats Overview */}
+            <div className="flex flex-wrap gap-4 mt-4">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-cyan-500"></div>
+                <span className="text-sm text-gray-300">
+                  {filteredTrades.length} {filteredTrades.length === 1 ? 'trade' : 'trades'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                <span className="text-sm text-gray-300">
+                  {winningTrades} winning trades
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-blue-500"></div>
+                <span className={`text-sm font-medium ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  Total P&L: {formatCurrency(totalPnL)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                <span className="text-sm text-gray-300">
+                  Win Rate: {winRate.toFixed(1)}%
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
-                  className="border-gray-600 hover:bg-gray-800/50 text-white relative"
+                  className="border-gray-600 hover:bg-gray-800/50 text-white relative min-w-[120px] justify-between"
                   disabled={exporting}
                 >
                   {exporting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Download className="h-4 w-4 mr-2" />
+                    <Download className="h-4 w-4" />
                   )}
                   Export
+                  <ChevronDown className="h-4 w-4 ml-1" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="bg-gray-800 border-gray-600 text-white">
-                <DropdownMenuItem 
-                  onClick={() => handleExport('csv')}
-                  className="flex items-center gap-2"
+              <DropdownMenuContent className="bg-gray-800 border-gray-600 text-white w-64">
+                <div className="px-2 py-1.5 text-xs text-gray-400 font-medium">Export Format</div>
+                <DropdownMenuItem
+                  onClick={() => handleExport('csv', 'all')}
+                  className="flex items-center gap-2 cursor-pointer"
                 >
                   <TableIcon className="h-4 w-4" />
-                  Export as CSV (All Data)
+                  <div>
+                    <div>Export All (CSV)</div>
+                    <div className="text-xs text-gray-400">Complete trade history</div>
+                  </div>
                 </DropdownMenuItem>
-                <DropdownMenuItem 
-                  onClick={() => handleExport('json')}
-                  className="flex items-center gap-2"
+                <DropdownMenuItem
+                  onClick={() => handleExport('json', 'all')}
+                  className="flex items-center gap-2 cursor-pointer"
                 >
                   <FileText className="h-4 w-4" />
-                  Export as JSON (All Data)
+                  <div>
+                    <div>Export All (JSON)</div>
+                    <div className="text-xs text-gray-400">Complete trade data</div>
+                  </div>
+                </DropdownMenuItem>
+                
+                <div className="border-t border-gray-600 my-1"></div>
+                <div className="px-2 py-1.5 text-xs text-gray-400 font-medium">Time Range</div>
+                <DropdownMenuItem
+                  onClick={() => handleExport('csv', 'last7')}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <TableIcon className="h-4 w-4" />
+                  Last 7 Days (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleExport('csv', 'last30')}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <TableIcon className="h-4 w-4" />
+                  Last 30 Days (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setExportCustomOpen(true)}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <CalendarIcon className="h-4 w-4" />
+                  Custom Range...
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+            <Dialog open={modalOpen} onOpenChange={(open) => {
+              setModalOpen(open);
+              if (!open) {
+                resetForm();
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button
-                  className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500"
+                  className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-lg transition-all duration-200 min-w-[140px]"
                   onClick={() => {
-                    if (!modalOpen) {
-                      setEditingTrade(null);
-                      setNewTrade({
-                        symbol: "",
-                        type: "Buy",
-                        quantity: 0,
-                        entryPrice: 0,
-                        exitPrice: undefined,
-                        brokerage: 0,
-                        tradeDate: new Date().toISOString(),
-                        entryDate: undefined,
-                        exitDate: undefined,
-                        source: "manual",
-                        image: "",
-                      });
-                      setImageUrl("");
-                    }
+                    resetForm();
+                    loadStrategies();
                   }}
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  {editingTrade ? "Edit Trade" : "Add Trade"}
+                  Add Trade
                 </Button>
               </DialogTrigger>
 
-              <DialogContent className="sm:max-w-4xl bg-gray-900 border border-gray-700 text-white max-h-[90vh] overflow-y-auto rounded-xl p-6">
-                <DialogHeader>
-                  <DialogTitle>{editingTrade ? "Edit Trade" : "Add New Trade"}</DialogTitle>
+              <DialogContent className="sm:max-w-4xl bg-gray-900 border border-gray-700 text-white max-h-[85vh] overflow-y-auto rounded-xl">
+                <DialogHeader className="border-b border-gray-700 pb-4">
+                  <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                    {editingTrade ? (
+                      <>
+                        <Edit className="h-5 w-5 text-cyan-400" />
+                        Edit Trade
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-5 w-5 text-cyan-400" />
+                        Add New Trade
+                      </>
+                    )}
+                  </DialogTitle>
                 </DialogHeader>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {/* Core Inputs */}
-                  {[
-                    { label: "Symbol", key: "symbol", type: "text" },
-                    { label: "Quantity", key: "quantity", type: "number" },
-                    { label: "Entry Price", key: "entryPrice", type: "number" },
-                    { label: "Exit Price", key: "exitPrice", type: "number" },
-                    { label: "Brokerage", key: "brokerage", type: "number" },
-                    { label: "Trade Date", key: "tradeDate", type: "date" },
-                    { label: "Entry Date", key: "entryDate", type: "date" },
-                    { label: "Exit Date", key: "exitDate", type: "date" },
-                    { label: "Broker", key: "broker", type: "text" },
-                    { label: "Strategy", key: "strategy", type: "text" },
-                    { label: "Chart Timeframe", key: "chartTimeframe", type: "text" },
-                    { label: "Remark", key: "remark", type: "text" },
-                  ].map((f) => (
-                    <div key={f.key}>
-                      <label className="text-sm font-medium">{f.label}</label>
-                      <Input
-                        type={f.type}
-                        value={
-                          f.type === "date"
-                            ? (newTrade as any)[f.key]
-                              ? (newTrade as any)[f.key].split("T")[0]
-                              : ""
-                            : (newTrade as any)[f.key] ?? ""
-                        }
-                        onChange={(e) =>
-                          setNewTrade((p) => ({
-                            ...p,
-                            [f.key]:
-                              f.type === "number"
-                                ? Number(e.target.value)
-                                : f.type === "date"
-                                ? e.target.value
-                                  ? new Date(e.target.value).toISOString()
-                                  : undefined
-                                : e.target.value,
-                          }))
-                        }
-                        className="bg-gray-800 border border-gray-600 text-white focus:border-cyan-400"
-                      />
-                    </div>
-                  ))}
-
-                  {/* Calculated P&L Display */}
-                  <div>
-                    <label className="text-sm font-medium">Calculated P&L</label>
-                    <Input
-                      type="text"
-                      value={formatCurrency(calculatedPnL)}
-                      readOnly
-                      className={`bg-gray-800 border border-gray-600 ${
-                        calculatedPnL >= 0 ? "text-green-500" : "text-red-500"
-                      } font-medium`}
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      {newTrade.type === "Buy" ? "Buy: (Exit - Entry) × Qty" : "Sell: (Entry - Exit) × Qty"} - Brokerage
-                    </p>
+                <div className="space-y-6 py-4">
+                  {/* Core Information Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {[
+                      { label: "Symbol *", key: "symbol", type: "text", placeholder: "e.g., RELIANCE" },
+                      { label: "Quantity *", key: "quantity", type: "number", placeholder: "0" },
+                      { label: "Entry Price *", key: "entryPrice", type: "number", placeholder: "0.00" },
+                      { label: "Exit Price", key: "exitPrice", type: "number", placeholder: "0.00" },
+                      { label: "Brokerage", key: "brokerage", type: "number", placeholder: "0.00" },
+                      { label: "Broker", key: "broker", type: "text", placeholder: "Broker name" },
+                    ].map((f) => (
+                      <div key={f.key} className="space-y-2">
+                        <label className="text-sm font-medium text-gray-300">{f.label}</label>
+                        <Input
+                          type={f.type}
+                          value={(newTrade as any)[f.key] ?? ""}
+                          onChange={(e) =>
+                            setNewTrade((p) => ({
+                              ...p,
+                              [f.key]: f.type === "number" ? Number(e.target.value) : e.target.value,
+                            }))
+                          }
+                          placeholder={f.placeholder}
+                          className="bg-gray-800 border-gray-600 text-white focus:border-cyan-400"
+                        />
+                      </div>
+                    ))}
                   </div>
 
-                  {/* Dropdowns */}
-                  {[
-                    { label: "Type", key: "type", options: ["Buy", "Sell"] },
-                    { label: "Session", key: "session", options: ["morning", "mid", "last"] },
-                    {
-                      label: "Segment",
-                      key: "segment",
-                      options: [
-                        "equity",
-                        "future",
-                        "forex",
-                        "option",
-                        "commodity",
-                        "currency",
-                        "crypto",
-                      ],
-                    },
-                    {
-                      label: "Trade Type",
-                      key: "tradeType",
-                      options: [
-                        "intraday",
-                        "positional",
-                        "investment",
-                        "swing",
-                        "scalping",
-                      ],
-                    },
-                    { label: "Direction", key: "direction", options: ["Long", "Short"] },
-                    {
-                      label: "Entry Condition",
-                      key: "entryCondition",
-                      options: [
-                        "revenge",
-                        "last entry",
-                        "good",
-                        "fomo",
-                        "entry without confirmation",
-                        "early entry",
-                        "accurate entry",
-                      ],
-                    },
-                    {
-                      label: "Exit Condition",
-                      key: "exitCondition",
-                      options: [
-                        "accurate",
-                        "early",
-                        "fear",
-                        "sl hit",
-                        "target hit",
-                        "trailing sl hit",
-                      ],
-                    },
-                  ].map((f) => (
-                    <div key={f.key}>
-                      <label className="text-sm font-medium">{f.label}</label>
-                      <select
-                        className="w-full bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-white focus:border-cyan-400"
-                        value={(newTrade as any)[f.key] || ""}
-                        onChange={(e) =>
-                          setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
-                        }
-                      >
-                        <option value="">Select {f.label}</option>
-                        {f.options.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
+                  {/* Dates Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {[
+                      { label: "Trade Date", key: "tradeDate", type: "date" },
+                      { label: "Entry Date", key: "entryDate", type: "date" },
+                      { label: "Exit Date", key: "exitDate", type: "date" },
+                    ].map((f) => (
+                      <div key={f.key} className="space-y-2">
+                        <label className="text-sm font-medium text-gray-300">{f.label}</label>
+                        <div className="flex gap-2">
+                          <Input
+                            type="date"
+                            value={(newTrade as any)[f.key] ?? ""}
+                            onChange={(e) =>
+                              setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                            }
+                            className="bg-gray-800 border-gray-600 text-white flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="border-gray-600 hover:bg-gray-700"
+                            onClick={() => {
+                              const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${(newTrade as any)[f.key] ?? ''}"]`);
+                              el?.showPicker?.();
+                            }}
+                          >
+                            <CalendarIcon className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Strategy and P&L Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-gray-300">Strategy</label>
+                      <div className="flex gap-2">
+                        <input
+                          ref={strategyInputRef}
+                          list="strategies-list"
+                          value={newTrade.strategy || ""}
+                          onChange={(e) => onStrategyInputChange(e.target.value)}
+                          placeholder="Type or select strategy..."
+                          className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
+                        />
+                        <datalist id="strategies-list">
+                          {strategies.map((s) => (
+                            <option key={s._id} value={s.name} />
+                          ))}
+                          <option value="+ Add new strategy..." />
+                        </datalist>
+                      </div>
                     </div>
-                  ))}
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-gray-300">Calculated P&L</label>
+                      <Input
+                        type="text"
+                        value={formatCurrency(calculatedPnL)}
+                        readOnly
+                        className={`bg-gray-800 border-gray-600 font-bold ${
+                          calculatedPnL >= 0 ? "text-green-400" : "text-red-400"
+                        }`}
+                      />
+                      <p className="text-xs text-gray-400">
+                        {newTrade.type === "Buy" 
+                          ? "Buy: (Exit - Entry) × Qty - Brokerage" 
+                          : "Sell: (Entry - Exit) × Qty - Brokerage"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Dropdowns Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {[
+                      { label: "Type", key: "type", options: ["Buy", "Sell"] },
+                      { label: "Session", key: "session", options: ["morning", "mid", "last"] },
+                      { label: "Segment", key: "segment", options: ["equity", "future", "forex", "option", "commodity", "currency", "crypto"] },
+                      { label: "Trade Type", key: "tradeType", options: ["intraday", "positional", "investment", "swing", "scalping"] },
+                      { label: "Direction", key: "direction", options: ["Long", "Short"] },
+                      { label: "Entry Condition", key: "entryCondition", options: ["revenge", "last entry", "good", "fomo", "entry without confirmation", "early entry", "accurate entry"] },
+                      { label: "Exit Condition", key: "exitCondition", options: ["accurate", "early", "fear", "sl hit", "target hit", "trailing sl hit"] },
+                    ].map((f) => (
+                      <div key={f.key} className="space-y-2">
+                        <label className="text-sm font-medium text-gray-300">{f.label}</label>
+                        <select
+                          className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
+                          value={(newTrade as any)[f.key] || ""}
+                          onChange={(e) =>
+                            setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                          }
+                        >
+                          <option value="">Select {f.label}</option>
+                          {f.options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
 
                   {/* Notes Section */}
-                  {[
-                    { label: "Entry Note", key: "entryNote" },
-                    { label: "Exit Note", key: "exitNote" },
-                    { label: "Notes", key: "notes" },
-                  ].map((f) => (
-                    <div key={f.key} className="col-span-full">
-                      <label className="text-sm font-medium">{f.label}</label>
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-semibold text-gray-300 border-b border-gray-700 pb-2">Additional Notes</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {[
+                        { label: "Entry Note", key: "entryNote", placeholder: "Why did you enter this trade?" },
+                        { label: "Exit Note", key: "exitNote", placeholder: "Why did you exit this trade?" },
+                      ].map((f) => (
+                        <div key={f.key} className="space-y-2">
+                          <label className="text-sm font-medium text-gray-300">{f.label}</label>
+                          <Input
+                            placeholder={f.placeholder}
+                            value={(newTrade as any)[f.key] || ""}
+                            onChange={(e) =>
+                              setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                            }
+                            className="bg-gray-800 border-gray-600 text-white"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-gray-300">General Notes</label>
                       <Input
-                        placeholder="Type here..."
-                        value={(newTrade as any)[f.key] || ""}
+                        placeholder="Any additional comments or observations..."
+                        value={newTrade.notes || ""}
                         onChange={(e) =>
-                          setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                          setNewTrade((p) => ({ ...p, notes: e.target.value }))
                         }
-                        className="bg-gray-800 border border-gray-600 text-white"
+                        className="bg-gray-800 border-gray-600 text-white"
                       />
                     </div>
-                  ))}
+                  </div>
 
-                  {/* Image Upload */}
-                  <div className="col-span-full">
-                    <label className="block text-sm font-medium mb-1">Upload Image</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageUpload}
-                      className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
-                    />
-                    {imageUrl ? (
-                      <div className="flex items-center justify-between mt-2 text-sm text-gray-300 border border-gray-700 rounded p-2">
-                        <span className="truncate">{imageUrl}</span>
-                        <button
+                  {/* Image Upload Section */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-300">Trade Image</label>
+                    <div className="border-2 border-dashed border-gray-600 rounded-lg p-4 text-center hover:border-cyan-400 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                        className="hidden"
+                        id="trade-image-upload"
+                      />
+                      <label
+                        htmlFor="trade-image-upload"
+                        className="cursor-pointer block"
+                      >
+                        <div className="flex flex-col items-center gap-2">
+                          <div className="h-10 w-10 rounded-full bg-gray-700 flex items-center justify-center">
+                            <FileText className="h-5 w-5 text-gray-400" />
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-300">
+                              {imageUrl ? "Change image" : "Upload trade image"}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              PNG, JPG, WEBP up to 10MB
+                            </p>
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                    {imageUrl && (
+                      <div className="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2 mt-2">
+                        <span className="text-sm text-gray-300 truncate flex-1">{imageUrl}</span>
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
                           onClick={removeImage}
-                          className="text-red-500 hover:text-red-400 text-xs"
+                          className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 px-2"
                         >
-                          Remove
-                        </button>
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                    ) : (
-                      <div className="text-gray-500 text-sm mt-2">No image selected</div>
                     )}
                   </div>
                 </div>
 
-                <Button
-                  onClick={handleSaveTrade}
-                  disabled={saving}
-                  className={`w-full mt-4 font-semibold text-black ${
-                    saving
-                      ? "bg-gray-500 cursor-not-allowed opacity-70"
-                      : "bg-cyan-500 hover:bg-cyan-400"
-                  }`}
-                >
-                  {saving ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Saving...
-                    </span>
-                  ) : editingTrade ? (
-                    "Update Trade"
-                  ) : (
-                    "Save Trade"
-                  )}
-                </Button>
+                <div className="flex gap-3 pt-4 border-t border-gray-700">
+                  <Button
+                    variant="outline"
+                    onClick={() => setModalOpen(false)}
+                    className="flex-1 border-gray-600 text-white hover:bg-gray-800"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleSaveTrade}
+                    disabled={saving}
+                    className={`flex-1 font-semibold ${
+                      saving
+                        ? "bg-gray-600 cursor-not-allowed"
+                        : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500"
+                    }`}
+                  >
+                    {saving ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {editingTrade ? "Updating..." : "Saving..."}
+                      </span>
+                    ) : editingTrade ? (
+                      "Update Trade"
+                    ) : (
+                      "Save Trade"
+                    )}
+                  </Button>
+                </div>
               </DialogContent>
             </Dialog>
           </div>
@@ -769,40 +967,45 @@ export function TradeTable() {
       </CardHeader>
 
       {/* Table Section */}
-      <CardContent>
-        <div className="flex flex-col sm:flex-row gap-2 mb-4">
-          <div className="relative flex-1">
+      <CardContent className="pt-0">
+        {/* Search and Filters */}
+        <div className="flex flex-col sm:flex-row gap-3 mb-6 p-1">
+          <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
-              placeholder="Search by symbol, strategy, broker..."
+              placeholder="Search trades by symbol, strategy, broker..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-gray-800 border border-gray-600 text-white focus:border-cyan-400"
+              className="pl-10 bg-gray-800 border-gray-600 text-white focus:border-cyan-400 h-11"
             />
           </div>
-          <Button 
-            size="icon" 
-            variant="outline" 
-            className="border-gray-600 text-white relative"
-            onClick={() => setFilterOpen(!filterOpen)}
-          >
-            <Filter className="h-4 w-4" />
-            {activeFiltersCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-cyan-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
-                {activeFiltersCount}
-              </span>
-            )}
-          </Button>
-          {activeFiltersCount > 0 && (
+          
+          <div className="flex gap-2">
             <Button
-              variant="ghost"
-              onClick={clearFilters}
-              className="text-gray-400 hover:text-gray-300"
+              variant="outline"
+              className="border-gray-600 text-white relative h-11 px-4"
+              onClick={() => setFilterOpen(!filterOpen)}
             >
-              <X className="h-4 w-4 mr-1" />
-              Clear
+              <Filter className="h-4 w-4 mr-2" />
+              Filters
+              {activeFiltersCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-cyan-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium">
+                  {activeFiltersCount}
+                </span>
+              )}
             </Button>
-          )}
+            
+            {activeFiltersCount > 0 && (
+              <Button
+                variant="ghost"
+                onClick={clearFilters}
+                className="text-gray-400 hover:text-gray-300 h-11"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Advanced Filters Panel */}
@@ -812,27 +1015,27 @@ export function TradeTable() {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
+              className="overflow-hidden mb-6"
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700 mb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-6 bg-gray-800/50 rounded-xl border border-gray-700">
                 {/* Symbol Filter */}
-                <div>
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-300">Symbol</label>
                   <Input
                     placeholder="Filter by symbol"
                     value={filters.symbol}
                     onChange={(e) => setFilters(prev => ({ ...prev, symbol: e.target.value }))}
-                    className="bg-gray-700 border-gray-600 text-white mt-1"
+                    className="bg-gray-700 border-gray-600 text-white"
                   />
                 </div>
 
                 {/* Type Filter */}
-                <div>
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-300">Type</label>
                   <select
                     value={filters.type}
                     onChange={(e) => setFilters(prev => ({ ...prev, type: e.target.value }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white mt-1"
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
                   >
                     <option value="all">All Types</option>
                     <option value="Buy">Buy</option>
@@ -840,119 +1043,13 @@ export function TradeTable() {
                   </select>
                 </div>
 
-                {/* Quantity Range */}
-                <div>
-                  <label className="text-sm font-medium text-gray-300">Quantity Range</label>
-                  <div className="flex gap-2 mt-1">
-                    <Input
-                      placeholder="Min"
-                      type="number"
-                      value={filters.quantityMin}
-                      onChange={(e) => setFilters(prev => ({ ...prev, quantityMin: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                    <Input
-                      placeholder="Max"
-                      type="number"
-                      value={filters.quantityMax}
-                      onChange={(e) => setFilters(prev => ({ ...prev, quantityMax: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Entry Price Range */}
-                <div>
-                  <label className="text-sm font-medium text-gray-300">Entry Price Range</label>
-                  <div className="flex gap-2 mt-1">
-                    <Input
-                      placeholder="Min"
-                      type="number"
-                      value={filters.entryPriceMin}
-                      onChange={(e) => setFilters(prev => ({ ...prev, entryPriceMin: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                    <Input
-                      placeholder="Max"
-                      type="number"
-                      value={filters.entryPriceMax}
-                      onChange={(e) => setFilters(prev => ({ ...prev, entryPriceMax: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Exit Price Range */}
-                <div>
-                  <label className="text-sm font-medium text-gray-300">Exit Price Range</label>
-                  <div className="flex gap-2 mt-1">
-                    <Input
-                      placeholder="Min"
-                      type="number"
-                      value={filters.exitPriceMin}
-                      onChange={(e) => setFilters(prev => ({ ...prev, exitPriceMin: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                    <Input
-                      placeholder="Max"
-                      type="number"
-                      value={filters.exitPriceMax}
-                      onChange={(e) => setFilters(prev => ({ ...prev, exitPriceMax: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                </div>
-
-                {/* P&L Range */}
-                <div>
-                  <label className="text-sm font-medium text-gray-300">P&L Range</label>
-                  <div className="flex gap-2 mt-1">
-                    <Input
-                      placeholder="Min"
-                      type="number"
-                      value={filters.pnlMin}
-                      onChange={(e) => setFilters(prev => ({ ...prev, pnlMin: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                    <Input
-                      placeholder="Max"
-                      type="number"
-                      value={filters.pnlMax}
-                      onChange={(e) => setFilters(prev => ({ ...prev, pnlMax: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Broker Filter */}
-                <div>
-                  <label className="text-sm font-medium text-gray-300">Broker</label>
-                  <Input
-                    placeholder="Filter by broker"
-                    value={filters.broker}
-                    onChange={(e) => setFilters(prev => ({ ...prev, broker: e.target.value }))}
-                    className="bg-gray-700 border-gray-600 text-white mt-1"
-                  />
-                </div>
-
-                {/* Strategy Filter */}
-                <div>
-                  <label className="text-sm font-medium text-gray-300">Strategy</label>
-                  <Input
-                    placeholder="Filter by strategy"
-                    value={filters.strategy}
-                    onChange={(e) => setFilters(prev => ({ ...prev, strategy: e.target.value }))}
-                    className="bg-gray-700 border-gray-600 text-white mt-1"
-                  />
-                </div>
-
                 {/* Status Filter */}
-                <div>
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-300">Status</label>
                   <select
                     value={filters.status}
                     onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white mt-1"
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
                   >
                     <option value="all">All Status</option>
                     <option value="active">Active</option>
@@ -960,22 +1057,61 @@ export function TradeTable() {
                   </select>
                 </div>
 
+                {/* Strategy Filter */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-300">Strategy</label>
+                  <Input
+                    placeholder="Filter by strategy"
+                    value={filters.strategy}
+                    onChange={(e) => setFilters(prev => ({ ...prev, strategy: e.target.value }))}
+                    className="bg-gray-700 border-gray-600 text-white"
+                  />
+                </div>
+
                 {/* Trade Date Range */}
-                <div>
+                <div className="space-y-2 md:col-span-2">
                   <label className="text-sm font-medium text-gray-300">Trade Date Range</label>
-                  <div className="flex gap-2 mt-1">
-                    <Input
-                      type="date"
-                      value={filters.tradeDateFrom}
-                      onChange={(e) => setFilters(prev => ({ ...prev, tradeDateFrom: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
-                    <Input
-                      type="date"
-                      value={filters.tradeDateTo}
-                      onChange={(e) => setFilters(prev => ({ ...prev, tradeDateTo: e.target.value }))}
-                      className="bg-gray-700 border-gray-600 text-white"
-                    />
+                  <div className="flex gap-3">
+                    <div className="flex-1 flex items-center gap-2">
+                      <Input
+                        type="date"
+                        value={filters.tradeDateFrom}
+                        onChange={(e) => setFilters(prev => ({ ...prev, tradeDateFrom: e.target.value }))}
+                        className="bg-gray-700 border-gray-600 text-white flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="border-gray-600 hover:bg-gray-700"
+                        onClick={() => {
+                          const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${filters.tradeDateFrom}"]`);
+                          el?.showPicker?.();
+                        }}
+                      >
+                        <CalendarIcon className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="flex-1 flex items-center gap-2">
+                      <Input
+                        type="date"
+                        value={filters.tradeDateTo}
+                        onChange={(e) => setFilters(prev => ({ ...prev, tradeDateTo: e.target.value }))}
+                        className="bg-gray-700 border-gray-600 text-white flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="border-gray-600 hover:bg-gray-700"
+                        onClick={() => {
+                          const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${filters.tradeDateTo}"]`);
+                          el?.showPicker?.();
+                        }}
+                      >
+                        <CalendarIcon className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -983,105 +1119,207 @@ export function TradeTable() {
           )}
         </AnimatePresence>
 
-        <div className="rounded-lg border border-gray-700 overflow-hidden">
-          <Table className="min-w-full text-white text-sm">
-            <TableHeader>
-              <TableRow className="bg-gray-900/80 text-gray-300">
-                <TableHead>Date</TableHead>
-                <TableHead>Symbol</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Entry</TableHead>
-                <TableHead>Exit</TableHead>
-                <TableHead>P/L</TableHead>
-                <TableHead>Strategy</TableHead>
-                <TableHead>Broker</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                [...Array(5)].map((_, i) => (
-                  <TableRow key={i}>
-                    {[...Array(10)].map((_, j) => (
-                      <TableCell key={j}>
-                        <Skeleton className="h-4 w-full" />
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : filteredTrades.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={10} className="text-center py-6 text-gray-400">
-                    No trades found
-                  </TableCell>
+        {/* Table Container */}
+        <div className="rounded-xl border border-gray-700 overflow-hidden bg-gray-800/20">
+          <div className="overflow-x-auto">
+            <Table className="min-w-full text-white text-sm">
+              <TableHeader>
+                <TableRow className="bg-gray-900/80 border-b border-gray-700 hover:bg-gray-900">
+                  <TableHead className="text-gray-300 font-semibold py-4">Date</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Symbol</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Type</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Qty</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Entry</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Exit</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">P/L</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Strategy</TableHead>
+                  <TableHead className="text-gray-300 font-semibold">Broker</TableHead>
+                  <TableHead className="text-gray-300 font-semibold text-right">Actions</TableHead>
                 </TableRow>
-              ) : (
-                filteredTrades.map((t) => (
-                  <motion.tr
-                    key={t._id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="border-b border-gray-700 hover:bg-gray-800/50"
-                  >
-                    <TableCell>{formatDate(t.tradeDate)}</TableCell>
-                    <TableCell>{t.symbol}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={t.type === "Buy" ? "default" : "secondary"}
-                        className={
-                          t.type === "Buy"
-                            ? "bg-green-500/10 text-green-500 border-green-500/20"
-                            : "bg-red-500/10 text-red-500 border-red-500/20"
-                        }
-                      >
-                        {t.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{t.quantity}</TableCell>
-                    <TableCell>{formatCurrency(Number(t.entryPrice))}</TableCell>
-                    <TableCell>{t.exitPrice ? formatCurrency(Number(t.exitPrice)) : "-"}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {((t as any).pnl >= 0 ? (
-                          <TrendingUp className="h-4 w-4 text-green-500" />
-                        ) : (
-                          <TrendingDown className="h-4 w-4 text-red-500" />
-                        ))}
-                        <span className={((t as any).pnl >= 0 ? "text-green-500" : "text-red-500")}>
-                          {formatCurrency(Math.abs(Number((t as any).pnl)))}
-                        </span>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  [...Array(5)].map((_, i) => (
+                    <TableRow key={i} className="border-b border-gray-700/50">
+                      {[...Array(10)].map((_, j) => (
+                        <TableCell key={j}>
+                          <Skeleton className="h-4 w-full bg-gray-700" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : filteredTrades.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-8">
+                      <div className="flex flex-col items-center gap-2 text-gray-400">
+                        <BarChart3 className="h-12 w-12 opacity-50" />
+                        <p className="font-medium">No trades found</p>
+                        <p className="text-sm">
+                          {searchTerm || activeFiltersCount > 0 
+                            ? "Try adjusting your search or filters" 
+                            : "Get started by adding your first trade"}
+                        </p>
                       </div>
                     </TableCell>
-                    <TableCell>{t.strategy || "-"}</TableCell>
-                    <TableCell>{t.broker || "Manual"}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8"
-                          onClick={() => router.push(`/trades/${t._id}`)}
-                          title="Open full trade view"
+                  </TableRow>
+                ) : (
+                  filteredTrades.map((trade) => (
+                    <motion.tr
+                      key={trade._id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="border-b border-gray-700/30 hover:bg-gray-800/40 transition-colors"
+                    >
+                      <TableCell className="py-4">
+                        <div className="font-medium">{formatDate(trade.tradeDate)}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-semibold text-white">{trade.symbol}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={`
+                            font-medium px-2 py-1 text-xs
+                            ${trade.type === "Buy" 
+                              ? "bg-green-500/10 text-green-400 border-green-500/20" 
+                              : "bg-red-500/10 text-red-400 border-red-500/20"
+                            }
+                          `}
                         >
-                          <Eye className="h-4 w-4 text-white" />
-                        </Button>
-
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEditTrade(t)}>
-                          <Edit className="h-4 w-4 text-white" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500 hover:text-red-400" onClick={() => handleDeleteTrade(t._id!)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </motion.tr>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                          {trade.type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{trade.quantity}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{formatCurrency(Number(trade.entryPrice))}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className={trade.exitPrice ? "font-medium" : "text-gray-500"}>
+                          {trade.exitPrice ? formatCurrency(Number(trade.exitPrice)) : "-"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className={`flex items-center gap-1.5 font-semibold ${
+                          Number((trade as any).pnl || 0) >= 0 ? "text-green-400" : "text-red-400"
+                        }`}>
+                          {Number((trade as any).pnl || 0) >= 0 ? (
+                            <TrendingUp className="h-4 w-4" />
+                          ) : (
+                            <TrendingDown className="h-4 w-4" />
+                          )}
+                          {formatCurrency(Math.abs(Number((trade as any).pnl || 0)))}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className={trade.strategy ? "text-white" : "text-gray-500"}>
+                          {trade.strategy || "-"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className={trade.broker ? "text-white" : "text-gray-500"}>
+                          {trade.broker || "Manual"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 hover:bg-gray-700"
+                            onClick={() => router.push(`/trades/${trade._id}`)}
+                            title="View details"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            className="h-8 w-8 hover:bg-gray-700"
+                            onClick={() => handleEditTrade(trade)}
+                            title="Edit trade"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            className="h-8 w-8 hover:bg-red-500/10 text-red-400 hover:text-red-300"
+                            onClick={() => handleDeleteTrade(trade._id!)}
+                            title="Delete trade"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </motion.tr>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </div>
+
+        {/* Custom Export Modal */}
+        {exportCustomOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setExportCustomOpen(false)} />
+            <div className="relative z-10 w-full max-w-md bg-gray-900 border border-gray-700 rounded-xl p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Export Custom Range</h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm text-gray-300">Start date</label>
+                    <Input
+                      type="date"
+                      className="bg-gray-800 border-gray-600 text-white"
+                      value={exportStart}
+                      onChange={(e) => setExportStart(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-gray-300">End date</label>
+                    <Input
+                      type="date"
+                      className="bg-gray-800 border-gray-600 text-white"
+                      value={exportEnd}
+                      onChange={(e) => setExportEnd(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-3 justify-end pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setExportCustomOpen(false);
+                      setExportStart("");
+                      setExportEnd("");
+                    }}
+                    className="border-gray-600 text-white hover:bg-gray-800"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => doCustomExport('csv')}
+                    className="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold"
+                  >
+                    Export CSV
+                  </Button>
+                  <Button
+                    onClick={() => doCustomExport('json')}
+                    className="bg-blue-600 hover:bg-blue-500 text-white font-semibold"
+                  >
+                    Export JSON
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
 }
+
+export default TradeTable;
