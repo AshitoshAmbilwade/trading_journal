@@ -6,6 +6,7 @@ import exportLogRoutes from "./exportLogRoutes.js";
 import gamificationRoutes from "./gamificationRoutes.js";
 import analyticsRoutes from "./analytics.js"; 
 import strategyRoutes from "./strategyRoutes.js";
+import importCsvRoutes from "./importCsv.js";
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use("/export-logs", exportLogRoutes);
 router.use("/gamification", gamificationRoutes);
 router.use("/analytics", analyticsRoutes); 
 router.use("/strategies", strategyRoutes);
+router.use("/import", importCsvRoutes);
 
 export default router;

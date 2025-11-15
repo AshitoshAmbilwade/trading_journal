@@ -1,14 +1,14 @@
+// models/Trade.ts
 import { Schema, model, Types, Document } from "mongoose";
 
 export interface Trade extends Document {
   userId: Types.ObjectId;
   symbol: string;
-  type: "Buy" | "Sell";
+  type?: "Buy" | "Sell";
   quantity: number;
 
-  // ✅ New fields
   entryPrice: number;
-  exitPrice?: number;
+  exitPrice?: number | null;
   pnl?: number;
 
   session?: "morning" | "mid" | "last";
@@ -52,6 +52,9 @@ export interface Trade extends Document {
     minusPoints: string[];
   };
 
+  // flexible place for extra imported fields
+  customFields?: Map<string, any>;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -60,10 +63,9 @@ const TradeSchema = new Schema<Trade>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     symbol: { type: String, required: true },
-    type: { type: String, enum: ["Buy", "Sell"], required: true },
+    type: { type: String, enum: ["Buy", "Sell"] }, // optional now
     quantity: { type: Number, required: true, min: 1 },
 
-    // ✅ New structured price fields
     entryPrice: { type: Number, required: true },
     exitPrice: { type: Number, default: null },
     pnl: { type: Number, default: 0 },
@@ -114,25 +116,46 @@ const TradeSchema = new Schema<Trade>(
       plusPoints: { type: [String], default: [] },
       minusPoints: { type: [String], default: [] },
     },
+
+    // Flexible storage for any additional fields from CSV imports
+    customFields: {
+      type: Map,
+      of: Schema.Types.Mixed,
+      default: {},
+    },
   },
   { timestamps: true }
 );
 
-// ✅ Auto-calculate PNL before save
+/**
+ * PNL calculation:
+ * - Only calculate when entryPrice, exitPrice and quantity are present and numeric.
+ * - Use brokerage if provided.
+ * - Keep calculation safe against strings/nulls.
+ */
 TradeSchema.pre("save", function (next) {
-  if (this.entryPrice && this.exitPrice && this.quantity) {
-    const gross =
-      this.type === "Buy"
-        ? (this.exitPrice - this.entryPrice) * this.quantity
-        : (this.entryPrice - this.exitPrice) * this.quantity;
+  try {
+    const hasEntry = this.entryPrice !== undefined && this.entryPrice !== null && !Number.isNaN(Number(this.entryPrice));
+    const hasExit = this.exitPrice !== undefined && this.exitPrice !== null && !Number.isNaN(Number(this.exitPrice));
+    const hasQty = this.quantity !== undefined && this.quantity !== null && !Number.isNaN(Number(this.quantity));
 
-    const brokerage = this.brokerage ?? 0;
-    this.pnl = Number((gross - brokerage).toFixed(2));
+    if (hasEntry && hasExit && hasQty) {
+      const entry = Number(this.entryPrice);
+      const exit = Number(this.exitPrice);
+      const qty = Number(this.quantity);
+
+      const gross = (this.type === "Buy") ? (exit - entry) * qty : (entry - exit) * qty;
+      const brokerage = (this as any).brokerage ?? 0;
+      this.pnl = Number((gross - Number(brokerage)).toFixed(2));
+    }
+  } catch (err) {
+    // don't block save for unexpected calculation errors; log if you want
+    // console.error("PNL calc error", err);
   }
   next();
 });
 
-// ✅ Optional index optimization
+// Indexes for queries/analytics
 TradeSchema.index({ userId: 1, tradeDate: -1 });
 TradeSchema.index({ strategy: 1 });
 TradeSchema.index({ segment: 1 });
