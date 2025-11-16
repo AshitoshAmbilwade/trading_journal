@@ -142,6 +142,14 @@ const exportJsonFromTrades = (trades: Trade[]) => {
   URL.revokeObjectURL(url);
 };
 
+/* ---------------- New component imports (presentational) ---------------- */
+import HeaderStats from './HeaderStats';
+import ExportDropdown from './ExportDropdown';
+import SearchAndFiltersBar from './SearchAndFiltersBar';
+import AdvancedFiltersPanel from './AdvancedFiltersPanel';
+import TradesTableBody from './TradesTableBody';
+import ExportCustomModal from './ExportCustomModal';
+
 /* ---------------- Component ---------------- */
 
 export function TradeTable() {
@@ -294,7 +302,7 @@ export function TradeTable() {
     setNewTrade(defaultNewTrade);
     setEditingTrade(null);
     setImageUrl("");
-  }, []);
+  }, [defaultNewTrade]);
 
   const handleSaveTrade = async () => {
     if (saving) return;
@@ -307,8 +315,9 @@ export function TradeTable() {
         return;
       }
 
+      // IMPORTANT: create UTC midnight for the selected date to avoid timezone shift
       const toIsoFromDateStr = (d?: any) =>
-        d ? new Date(`${String(d).split("T")[0]}T00:00:00`).toISOString() : undefined;
+        d ? new Date(`${String(d).split("T")[0]}T00:00:00Z`).toISOString() : undefined;
 
       const payload: Partial<Trade> = {
         ...newTrade,
@@ -353,7 +362,11 @@ export function TradeTable() {
   const handleEditTrade = (trade: Trade) => {
     const img = extractImageString(trade.image ?? (trade as any).images?.[0] ?? "");
     setEditingTrade(trade);
-    const getDateStr = (iso?: string) => (iso ? iso.split("T")[0] : todayDateStr);
+
+    // Use local date string (YYYY-MM-DD) for the date input to avoid timezone mismatch
+    const getDateStr = (iso?: string) =>
+      iso ? new Date(iso).toLocaleDateString("en-CA") : todayDateStr;
+
     setNewTrade({
       ...trade,
       image: img,
@@ -571,113 +584,22 @@ export function TradeTable() {
     <Card className="border border-gray-700 bg-black/80 backdrop-blur-xl hover:border-cyan-500/40 transition-all duration-300">
       <CardHeader className="pb-4">
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg">
-                <BarChart3 className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <CardTitle className="text-white text-xl font-bold">Trade Journal</CardTitle>
-                <p className="text-sm text-gray-400 mt-1">
-                  Manage and analyze your trading performance
-                </p>
-              </div>
-            </div>
-            
-            {/* Stats Overview */}
-            <div className="flex flex-wrap gap-4 mt-4">
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-cyan-500"></div>
-                <span className="text-sm text-gray-300">
-                  {filteredTrades.length} {filteredTrades.length === 1 ? 'trade' : 'trades'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                <span className="text-sm text-gray-300">
-                  {winningTrades} winning trades
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-blue-500"></div>
-                <span className={`text-sm font-medium ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  Total P&L: {formatCurrency(totalPnL)}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                <span className="text-sm text-gray-300">
-                  Win Rate: {winRate.toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          </div>
+          {/* Left: Header Stats (extracted) */}
+          <HeaderStats
+            filteredCount={filteredTrades.length}
+            winningTrades={winningTrades}
+            totalPnL={totalPnL}
+            winRate={winRate}
+            formatCurrency={formatCurrency}
+          />
 
+          {/* Right: Export + Add */}
           <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="border-gray-600 hover:bg-gray-800/50 text-white relative min-w-[120px] justify-between"
-                  disabled={exporting}
-                >
-                  {exporting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                  Export
-                  <ChevronDown className="h-4 w-4 ml-1" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="bg-gray-800 border-gray-600 text-white w-64">
-                <div className="px-2 py-1.5 text-xs text-gray-400 font-medium">Export Format</div>
-                <DropdownMenuItem
-                  onClick={() => handleExport('csv', 'all')}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <TableIcon className="h-4 w-4" />
-                  <div>
-                    <div>Export All (CSV)</div>
-                    <div className="text-xs text-gray-400">Complete trade history</div>
-                  </div>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => handleExport('json', 'all')}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <FileText className="h-4 w-4" />
-                  <div>
-                    <div>Export All (JSON)</div>
-                    <div className="text-xs text-gray-400">Complete trade data</div>
-                  </div>
-                </DropdownMenuItem>
-                
-                <div className="border-t border-gray-600 my-1"></div>
-                <div className="px-2 py-1.5 text-xs text-gray-400 font-medium">Time Range</div>
-                <DropdownMenuItem
-                  onClick={() => handleExport('csv', 'last7')}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <TableIcon className="h-4 w-4" />
-                  Last 7 Days (CSV)
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => handleExport('csv', 'last30')}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <TableIcon className="h-4 w-4" />
-                  Last 30 Days (CSV)
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setExportCustomOpen(true)}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <CalendarIcon className="h-4 w-4" />
-                  Custom Range...
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ExportDropdown
+              exporting={exporting}
+              handleExport={handleExport}
+              setExportCustomOpen={setExportCustomOpen}
+            />
 
             <Dialog open={modalOpen} onOpenChange={(open) => {
               setModalOpen(open);
@@ -968,154 +890,20 @@ export function TradeTable() {
 
       {/* Table Section */}
       <CardContent className="pt-0">
-        {/* Search and Filters */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-6 p-1">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search trades by symbol, strategy, broker..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-gray-800 border-gray-600 text-white focus:border-cyan-400 h-11"
-            />
-          </div>
-          
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="border-gray-600 text-white relative h-11 px-4"
-              onClick={() => setFilterOpen(!filterOpen)}
-            >
-              <Filter className="h-4 w-4 mr-2" />
-              Filters
-              {activeFiltersCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-cyan-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium">
-                  {activeFiltersCount}
-                </span>
-              )}
-            </Button>
-            
-            {activeFiltersCount > 0 && (
-              <Button
-                variant="ghost"
-                onClick={clearFilters}
-                className="text-gray-400 hover:text-gray-300 h-11"
-              >
-                <X className="h-4 w-4 mr-1" />
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
+        {/* Search and Filters (extracted) */}
+        <SearchAndFiltersBar
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          filterOpen={filterOpen}
+          setFilterOpen={setFilterOpen}
+          activeFiltersCount={activeFiltersCount}
+          clearFilters={clearFilters}
+        />
 
         {/* Advanced Filters Panel */}
         <AnimatePresence>
           {filterOpen && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden mb-6"
-            >
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-6 bg-gray-800/50 rounded-xl border border-gray-700">
-                {/* Symbol Filter */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-300">Symbol</label>
-                  <Input
-                    placeholder="Filter by symbol"
-                    value={filters.symbol}
-                    onChange={(e) => setFilters(prev => ({ ...prev, symbol: e.target.value }))}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-
-                {/* Type Filter */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-300">Type</label>
-                  <select
-                    value={filters.type}
-                    onChange={(e) => setFilters(prev => ({ ...prev, type: e.target.value }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                  >
-                    <option value="all">All Types</option>
-                    <option value="Buy">Buy</option>
-                    <option value="Sell">Sell</option>
-                  </select>
-                </div>
-
-                {/* Status Filter */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-300">Status</label>
-                  <select
-                    value={filters.status}
-                    onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
-                  >
-                    <option value="all">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="closed">Closed</option>
-                  </select>
-                </div>
-
-                {/* Strategy Filter */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-300">Strategy</label>
-                  <Input
-                    placeholder="Filter by strategy"
-                    value={filters.strategy}
-                    onChange={(e) => setFilters(prev => ({ ...prev, strategy: e.target.value }))}
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-
-                {/* Trade Date Range */}
-                <div className="space-y-2 md:col-span-2">
-                  <label className="text-sm font-medium text-gray-300">Trade Date Range</label>
-                  <div className="flex gap-3">
-                    <div className="flex-1 flex items-center gap-2">
-                      <Input
-                        type="date"
-                        value={filters.tradeDateFrom}
-                        onChange={(e) => setFilters(prev => ({ ...prev, tradeDateFrom: e.target.value }))}
-                        className="bg-gray-700 border-gray-600 text-white flex-1"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="border-gray-600 hover:bg-gray-700"
-                        onClick={() => {
-                          const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${filters.tradeDateFrom}"]`);
-                          el?.showPicker?.();
-                        }}
-                      >
-                        <CalendarIcon className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <div className="flex-1 flex items-center gap-2">
-                      <Input
-                        type="date"
-                        value={filters.tradeDateTo}
-                        onChange={(e) => setFilters(prev => ({ ...prev, tradeDateTo: e.target.value }))}
-                        className="bg-gray-700 border-gray-600 text-white flex-1"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="border-gray-600 hover:bg-gray-700"
-                        onClick={() => {
-                          const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${filters.tradeDateTo}"]`);
-                          el?.showPicker?.();
-                        }}
-                      >
-                        <CalendarIcon className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+            <AdvancedFiltersPanel filters={filters} setFilters={setFilters} />
           )}
         </AnimatePresence>
 
@@ -1138,185 +926,30 @@ export function TradeTable() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
-                  [...Array(5)].map((_, i) => (
-                    <TableRow key={i} className="border-b border-gray-700/50">
-                      {[...Array(10)].map((_, j) => (
-                        <TableCell key={j}>
-                          <Skeleton className="h-4 w-full bg-gray-700" />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : filteredTrades.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8">
-                      <div className="flex flex-col items-center gap-2 text-gray-400">
-                        <BarChart3 className="h-12 w-12 opacity-50" />
-                        <p className="font-medium">No trades found</p>
-                        <p className="text-sm">
-                          {searchTerm || activeFiltersCount > 0 
-                            ? "Try adjusting your search or filters" 
-                            : "Get started by adding your first trade"}
-                        </p>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredTrades.map((trade) => (
-                    <motion.tr
-                      key={trade._id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="border-b border-gray-700/30 hover:bg-gray-800/40 transition-colors"
-                    >
-                      <TableCell className="py-4">
-                        <div className="font-medium">{formatDate(trade.tradeDate)}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-semibold text-white">{trade.symbol}</div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={`
-                            font-medium px-2 py-1 text-xs
-                            ${trade.type === "Buy" 
-                              ? "bg-green-500/10 text-green-400 border-green-500/20" 
-                              : "bg-red-500/10 text-red-400 border-red-500/20"
-                            }
-                          `}
-                        >
-                          {trade.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium">{trade.quantity}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium">{formatCurrency(Number(trade.entryPrice))}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className={trade.exitPrice ? "font-medium" : "text-gray-500"}>
-                          {trade.exitPrice ? formatCurrency(Number(trade.exitPrice)) : "-"}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className={`flex items-center gap-1.5 font-semibold ${
-                          Number((trade as any).pnl || 0) >= 0 ? "text-green-400" : "text-red-400"
-                        }`}>
-                          {Number((trade as any).pnl || 0) >= 0 ? (
-                            <TrendingUp className="h-4 w-4" />
-                          ) : (
-                            <TrendingDown className="h-4 w-4" />
-                          )}
-                          {formatCurrency(Math.abs(Number((trade as any).pnl || 0)))}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className={trade.strategy ? "text-white" : "text-gray-500"}>
-                          {trade.strategy || "-"}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className={trade.broker ? "text-white" : "text-gray-500"}>
-                          {trade.broker || "Manual"}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-8 w-8 hover:bg-gray-700"
-                            onClick={() => router.push(`/trades/${trade._id}`)}
-                            title="View details"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="ghost" 
-                            className="h-8 w-8 hover:bg-gray-700"
-                            onClick={() => handleEditTrade(trade)}
-                            title="Edit trade"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="ghost" 
-                            className="h-8 w-8 hover:bg-red-500/10 text-red-400 hover:text-red-300"
-                            onClick={() => handleDeleteTrade(trade._id!)}
-                            title="Delete trade"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </motion.tr>
-                  ))
-                )}
+                <TradesTableBody
+                  loading={loading}
+                  filteredTrades={filteredTrades}
+                  formatDate={formatDate}
+                  formatCurrency={formatCurrency}
+                  handleEditTrade={handleEditTrade}
+                  handleDeleteTrade={handleDeleteTrade}
+                  routerPush={(p: string) => router.push(p)}
+                />
               </TableBody>
             </Table>
           </div>
         </div>
 
-        {/* Custom Export Modal */}
-        {exportCustomOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/60" onClick={() => setExportCustomOpen(false)} />
-            <div className="relative z-10 w-full max-w-md bg-gray-900 border border-gray-700 rounded-xl p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Export Custom Range</h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm text-gray-300">Start date</label>
-                    <Input
-                      type="date"
-                      className="bg-gray-800 border-gray-600 text-white"
-                      value={exportStart}
-                      onChange={(e) => setExportStart(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm text-gray-300">End date</label>
-                    <Input
-                      type="date"
-                      className="bg-gray-800 border-gray-600 text-white"
-                      value={exportEnd}
-                      onChange={(e) => setExportEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-3 justify-end pt-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setExportCustomOpen(false);
-                      setExportStart("");
-                      setExportEnd("");
-                    }}
-                    className="border-gray-600 text-white hover:bg-gray-800"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={() => doCustomExport('csv')}
-                    className="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold"
-                  >
-                    Export CSV
-                  </Button>
-                  <Button
-                    onClick={() => doCustomExport('json')}
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-semibold"
-                  >
-                    Export JSON
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Custom Export Modal (extracted) */}
+        <ExportCustomModal
+          exportCustomOpen={exportCustomOpen}
+          exportStart={exportStart}
+          exportEnd={exportEnd}
+          setExportStart={setExportStart}
+          setExportEnd={setExportEnd}
+          setExportCustomOpen={setExportCustomOpen}
+          doCustomExport={doCustomExport}
+        />
       </CardContent>
     </Card>
   );
