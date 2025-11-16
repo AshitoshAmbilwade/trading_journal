@@ -28,7 +28,7 @@ export default function RegisterPage() {
 
     toast({ title: "Account created", description: "Welcome to your trading journal!" });
     localStorage.setItem("token", data.token);
-    router.push("/");
+    router.push("/dashboard");
   } catch (err: any) {
     toast({ title: "Error", description: err.message || "Registration failed", variant: "destructive" });
   } finally {

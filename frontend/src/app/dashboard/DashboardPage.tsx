@@ -6,9 +6,8 @@ import { Dashboard } from "./Dashboard";
 import { TradeBuddy } from "./TradeBuddy";
 import { Reports } from "./Reports";
 import { Settings } from "./Settings";
-// Analytics import (index.ts in components/analytics exports AnalyticsShell as default export)
 import { AnalyticsShell } from "../../components/analytics";
-import TradingLabStrategiesPage from "./../trading-lab/strategies/page"; // <-- NEW: Trading Lab - Strategies page
+import TradingLabStrategiesPage from "./../trading-lab/strategies/page";
 
 const pageVariants = {
   initial: { opacity: 0, y: 20 },
@@ -16,7 +15,6 @@ const pageVariants = {
   exit: { opacity: 0, y: -20 },
 };
 
-// ✅ Fixed transition type for Framer Motion (TypeScript safe)
 const pageTransition = {
   type: "tween" as const,
   ease: "anticipate" as const,
@@ -29,7 +27,9 @@ function AppRoutes() {
   return (
     <AppLayout>
       <AnimatePresence mode="wait">
-        {currentPath === "/" && (
+
+        {/* 🔥 UPDATED: Dashboard now handled at /dashboard */}
+        {currentPath === "/dashboard" && (
           <motion.div
             key="dashboard"
             variants={pageVariants}
@@ -42,7 +42,7 @@ function AppRoutes() {
           </motion.div>
         )}
 
-        {/* Analytics route */}
+        {/* Analytics */}
         {currentPath === "/analytics" && (
           <motion.div
             key="analytics"
@@ -56,6 +56,7 @@ function AppRoutes() {
           </motion.div>
         )}
 
+        {/* Reports */}
         {currentPath === "/reports" && (
           <motion.div
             key="reports"
@@ -69,7 +70,7 @@ function AppRoutes() {
           </motion.div>
         )}
 
-        {/* TRADING LAB -> STRATEGIES route */}
+        {/* Trading Lab → Strategies */}
         {currentPath === "/trading-lab/strategies" && (
           <motion.div
             key="trading-lab-strategies"
@@ -83,6 +84,7 @@ function AppRoutes() {
           </motion.div>
         )}
 
+        {/* Settings */}
         {currentPath === "/settings" && (
           <motion.div
             key="settings"
@@ -95,6 +97,7 @@ function AppRoutes() {
             <Settings />
           </motion.div>
         )}
+
       </AnimatePresence>
     </AppLayout>
   );
