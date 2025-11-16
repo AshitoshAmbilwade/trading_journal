@@ -1,4 +1,6 @@
+// src/app/dashboard/dashboardPage.tsx
 "use client";
+
 import { motion, AnimatePresence } from "motion/react";
 import { Router, useRouter } from "../../utils/routes";
 import { AppLayout } from "../../components/AppLayout";
@@ -24,14 +26,20 @@ const pageTransition = {
 function AppRoutes() {
   const { currentPath } = useRouter();
 
+  // Treat "/" as dashboard as well — ensures dashboard renders immediately
+  // when user is navigated programmatically from the landing page.
+  const showDashboard =
+    currentPath === "/dashboard" ||
+    currentPath === "/" ||
+    currentPath.startsWith("/dashboard");
+
   return (
     <AppLayout>
       <AnimatePresence mode="wait">
-
-        {/* 🔥 UPDATED: Dashboard now handled at /dashboard */}
-        {currentPath === "/dashboard" && (
+        {/* 🔥 UPDATED: Dashboard now handled at /dashboard — also handle "/" */}
+        {showDashboard && (
           <motion.div
-            key="dashboard"
+            key={`dashboard:${currentPath}`}
             variants={pageVariants}
             initial="initial"
             animate="animate"
@@ -45,7 +53,7 @@ function AppRoutes() {
         {/* Analytics */}
         {currentPath === "/analytics" && (
           <motion.div
-            key="analytics"
+            key={`analytics:${currentPath}`}
             variants={pageVariants}
             initial="initial"
             animate="animate"
@@ -59,7 +67,7 @@ function AppRoutes() {
         {/* Reports */}
         {currentPath === "/reports" && (
           <motion.div
-            key="reports"
+            key={`reports:${currentPath}`}
             variants={pageVariants}
             initial="initial"
             animate="animate"
@@ -73,7 +81,7 @@ function AppRoutes() {
         {/* Trading Lab → Strategies */}
         {currentPath === "/trading-lab/strategies" && (
           <motion.div
-            key="trading-lab-strategies"
+            key={`trading-lab-strategies:${currentPath}`}
             variants={pageVariants}
             initial="initial"
             animate="animate"
@@ -87,7 +95,7 @@ function AppRoutes() {
         {/* Settings */}
         {currentPath === "/settings" && (
           <motion.div
-            key="settings"
+            key={`settings:${currentPath}`}
             variants={pageVariants}
             initial="initial"
             animate="animate"
@@ -97,7 +105,6 @@ function AppRoutes() {
             <Settings />
           </motion.div>
         )}
-
       </AnimatePresence>
     </AppLayout>
   );

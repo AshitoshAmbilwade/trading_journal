@@ -36,7 +36,7 @@ interface User {
 // Updated navItems: Dashboard now points to /dashboard
 const navItems = [
   { icon: Home, label: "Dashboard", path: "/dashboard", gradient: "from-cyan-500 to-blue-600" },
-  { icon: BarChart3, label: "Analytics", path: "/analytics", gradient: "from-purple-500 to-pink-600", badge: "Soon" },
+  { icon: BarChart3, label: "Analytics", path: "/analytics", gradient: "from-purple-500 to-pink-600", badge: "New" },
   { icon: FileText, label: "Reports", path: "/reports", gradient: "from-orange-500 to-yellow-500" },
   { icon: TrendingUp, label: "Trading Lab", path: "/trading-lab/strategies", gradient: "from-green-500 to-emerald-600" },
   { icon: Award, label: "Achievements", path: "/achievements", gradient: "from-yellow-500 to-orange-600", badge: "New" },
