@@ -16,49 +16,54 @@ const apiClient = axios.create({
   timeout: 10000,
 });
 
+// helper to detect "looks like FormData"
+function looksLikeFormData(data: any) {
+  return (
+    data &&
+    typeof data === "object" &&
+    typeof data.get === "function" &&
+    typeof data.append === "function"
+  );
+}
+
 // Request interceptor: attach auth header, and remove Content-Type for FormData
 apiClient.interceptors.request.use(
   (config: AxiosRequestConfig) => {
     try {
       // Attach token if present
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
       if (token && config.headers) {
         (config.headers as any).Authorization = `Bearer ${token}`;
       }
 
       // If request data is FormData (browser) — delete content-type so axios sets boundary
       if (config && config.data) {
-        // In browser: FormData instanceof global FormData
         const isFormData =
           typeof FormData !== "undefined" && config.data instanceof FormData;
+        const duckFormData = looksLikeFormData(config.data);
 
-        // Also handle cases where some libraries wrap FormData or server-side – basic duck-check:
-        const looksLikeFormData =
-          !isFormData &&
-          config.data &&
-          typeof config.data === "object" &&
-          typeof (config.data as any).get === "function" &&
-          typeof (config.data as any).append === "function";
-
-        if (isFormData || looksLikeFormData) {
+        if (isFormData || duckFormData) {
           if (config.headers) {
-            // remove any Content-Type to let browser/axios set multipart/form-data with boundary
             delete (config.headers as any)["Content-Type"];
             delete (config.headers as any)["content-type"];
           }
         } else {
           // For non-FormData payloads, ensure JSON content-type unless user set explicit header
-          if (config.headers && !(config.headers as any)["Content-Type"] && !(config.headers as any)["content-type"]) {
+          if (
+            config.headers &&
+            !(config.headers as any)["Content-Type"] &&
+            !(config.headers as any)["content-type"]
+          ) {
             (config.headers as any)["Content-Type"] = "application/json";
           }
         }
-      } else {
-        // No data -> keep default headers minimal (but ensure auth remains)
       }
 
       return config;
     } catch (err) {
       // don't block request on interceptor error
+      // eslint-disable-next-line no-console
       console.warn("Request interceptor error:", err);
       return config;
     }
@@ -69,10 +74,27 @@ apiClient.interceptors.request.use(
 // Response interceptor: return response (we let fetchApi pick response.data)
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => response,
-  (error) => {
-    // prefer useful message during dev
-    console.error("API Error:", error?.response?.data || error.message || error);
-    return Promise.reject(error?.response?.data || error);
+  (error: any) => {
+    // Normalize axios error object safely
+    const status = error?.response?.status;
+    const data = error?.response?.data;
+
+    // If 401 -> mark unauthorized so callers can handle without console spam
+    if (status === 401) {
+      // return a small structured object so callers can check err?.unauthorized
+      return Promise.reject({ unauthorized: true, status: 401, data: data || null });
+    }
+
+    // In development log more details, in prod minimize leak
+    if (process.env.NODE_ENV === "development") {
+      // eslint-disable-next-line no-console
+      console.error("API Error:", data ?? error?.message ?? error);
+    } else {
+      // eslint-disable-next-line no-console
+      console.error("API Error:", error?.message ?? "see server logs");
+    }
+
+    return Promise.reject(data || error);
   }
 );
 

@@ -42,11 +42,22 @@ export function AppLayout({ children }: AppLayoutProps) {
       try {
         const res = await authApi.getMe();
         const u = res && (res as any).user ? (res as any).user : null;
-        if (isDev) console.debug("[AppLayout] fetched user (masked):", u ? { name: u.name, tier: u.tier } : null);
+        if (isDev)
+          console.debug(
+            "[AppLayout] fetched user (masked):",
+            u ? { name: u.name, tier: u.tier } : null
+          );
         if (mounted) setUser(u);
-      } catch (err) {
-        if (isDev) console.error("[AppLayout] getMe failed:", err);
-        if (mounted) setUser(null);
+      } catch (err: any) {
+        // handle structured unauthorized sentinel from apiHandler
+        if (err?.unauthorized) {
+          // No token / invalid token — silent and expected.
+          if (mounted) setUser(null);
+        } else {
+          // unexpected error — log in dev, but keep UX quiet in prod
+          if (isDev) console.error("[AppLayout] getMe failed:", err);
+          if (mounted) setUser(null);
+        }
       } finally {
         if (mounted) setLoadingUser(false);
       }
