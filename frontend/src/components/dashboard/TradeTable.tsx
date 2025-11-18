@@ -1,4 +1,3 @@
-// src/components/dashboard/TradeTable.tsx
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -85,6 +84,64 @@ const calculatePnL = (
   return Number(netPnL.toFixed(2));
 };
 
+/**
+ * Robust date extractor:
+ * - If input contains YYYY-MM-DD -> return that.
+ * - If numeric timestamp -> use UTC date.
+ * - If ISO string ending with Z or containing timezone offset -> use UTC date.
+ * - If string without timezone -> treat as local date and use local components.
+ *
+ * Returns 'YYYY-MM-DD' or empty string.
+ */
+const getDateOnly = (val?: any): string => {
+  if (val === undefined || val === null) return "";
+  try {
+    // numeric timestamp
+    if (typeof val === "number" && isFinite(val)) {
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return "";
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    const s = String(val).trim();
+    if (!s) return "";
+
+    // If already has YYYY-MM-DD anywhere, return first match
+    const isoMatch = s.match(/(\d{4}-\d{2}-\d{2})/);
+    if (isoMatch) {
+      // But ensure we pick correct semantics: if string contains timezone info, the YYYY-MM-DD may be part of ISO; okay to return
+      return isoMatch[1];
+    }
+
+    // Parse as Date
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return "";
+
+    // detect timezone presence in original string: 'Z' or offset like +05:30 or -0400
+    const hasTZ = /Z$|[+\-]\d{2}:?\d{2}$/.test(s) || /T.*[+\-]\d{2}:?\d{2}/.test(s);
+
+    if (hasTZ) {
+      // use UTC components (string had explicit timezone)
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    } else {
+      // no timezone present -> use local date components (user likely entered local date)
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+  } catch {
+    return "";
+  }
+};
+
+// Export CSV: force Excel to treat dates as text cells to avoid #### and ensure calendar date shown
 const exportCsvFromTrades = (trades: Trade[]) => {
   const headers = [
     "Symbol", "Type", "Quantity", "Entry Price", "Exit Price", "P/L", "Brokerage",
@@ -94,32 +151,42 @@ const exportCsvFromTrades = (trades: Trade[]) => {
     "Exit Note", "Remark", "Notes"
   ].join(',');
 
-  const data = trades.map(trade => [
-    trade.symbol,
-    trade.type,
-    trade.quantity,
-    trade.entryPrice,
-    trade.exitPrice || '',
-    (trade as any).pnl || '',
-    trade.brokerage || '',
-    trade.tradeDate,
-    trade.entryDate || '',
-    trade.exitDate || '',
-    trade.broker || '',
-    trade.strategy || '',
-    trade.session || '',
-    trade.segment || '',
-    trade.tradeType || '',
-    trade.direction || '',
-    trade.chartTimeframe || '',
-    trade.entryCondition || '',
-    trade.exitCondition || '',
-    trade.source || '',
-    `"${(trade.entryNote || '').replace(/"/g, '""')}"`,
-    `"${(trade.exitNote || '').replace(/"/g, '""')}"`,
-    `"${(trade.remark || '').replace(/"/g, '""')}"`,
-    `"${(trade.notes || '').replace(/"/g, '""')}"`,
-  ].join(','));
+  const data = trades.map(trade => {
+    const tradeDateStr = getDateOnly(trade.tradeDate);
+    const entryDateStr = getDateOnly(trade.entryDate);
+    const exitDateStr = getDateOnly(trade.exitDate);
+
+    const tradeDateCell = tradeDateStr ? `="${tradeDateStr}"` : '';
+    const entryDateCell = entryDateStr ? `="${entryDateStr}"` : '';
+    const exitDateCell = exitDateStr ? `="${exitDateStr}"` : '';
+
+    return [
+      trade.symbol ?? '',
+      trade.type ?? '',
+      trade.quantity ?? '',
+      trade.entryPrice ?? '',
+      trade.exitPrice ?? '',
+      (trade as any).pnl ?? '',
+      trade.brokerage ?? '',
+      tradeDateCell,
+      entryDateCell,
+      exitDateCell,
+      trade.broker ?? '',
+      trade.strategy ?? '',
+      trade.session ?? '',
+      trade.segment ?? '',
+      trade.tradeType ?? '',
+      trade.direction ?? '',
+      trade.chartTimeframe ?? '',
+      trade.entryCondition ?? '',
+      trade.exitCondition ?? '',
+      trade.source ?? '',
+      `"${(trade.entryNote || '').replace(/"/g, '""')}"`,
+      `"${(trade.exitNote || '').replace(/"/g, '""')}"`,
+      `"${(trade.remark || '').replace(/"/g, '""')}"`,
+      `"${(trade.notes || '').replace(/"/g, '""')}"`
+    ].join(',');
+  });
 
   const csv = [headers, ...data].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -262,11 +329,13 @@ export function TradeTable() {
       setLoading(true);
       const data = await tradesApi.getAll();
       const loaded = Array.isArray(data) ? data : (data && (data as any).trades) || [];
+      // Preserve backend's stored values but ensure we have something valid
       const normalized: Trade[] = loaded.map((t: any) => ({
         ...t,
-        tradeDate: t.tradeDate ? new Date(t.tradeDate).toISOString() : new Date().toISOString(),
-        entryDate: t.entryDate ? new Date(t.entryDate).toISOString() : undefined,
-        exitDate: t.exitDate ? new Date(t.exitDate).toISOString() : undefined,
+        // keep whatever backend returned (ISO string, date-only string, timestamp) — we'll normalize on export/filter/etc
+        tradeDate: t.tradeDate ?? new Date().toISOString(),
+        entryDate: t.entryDate ?? undefined,
+        exitDate: t.exitDate ?? undefined,
         image: t.image ?? (Array.isArray(t.images) ? t.images[0] : ""),
       }));
       setTrades(normalized);
@@ -363,9 +432,8 @@ export function TradeTable() {
     const img = extractImageString(trade.image ?? (trade as any).images?.[0] ?? "");
     setEditingTrade(trade);
 
-    // Use local date string (YYYY-MM-DD) for the date input to avoid timezone mismatch
-    const getDateStr = (iso?: string) =>
-      iso ? new Date(iso).toLocaleDateString("en-CA") : todayDateStr;
+    // For date inputs, use YYYY-MM-DD that matches original calendar day
+    const getDateStr = (v?: any) => v ? getDateOnly(v) : todayDateStr;
 
     setNewTrade({
       ...trade,
@@ -429,17 +497,22 @@ export function TradeTable() {
       const matchesExitCondition = filters.exitCondition === "all" || trade.exitCondition === filters.exitCondition;
       const matchesSource = filters.source === "all" || trade.source === filters.source;
 
-      const tradeDate = new Date(trade.tradeDate);
-      const matchesTradeDate = (!filters.tradeDateFrom || tradeDate >= new Date(filters.tradeDateFrom)) &&
-        (!filters.tradeDateTo || tradeDate <= new Date(filters.tradeDateTo + 'T23:59:59'));
+      // Normalize trade date to midnight UTC for consistent comparisons
+      const tradeDateIso = getDateOnly(trade.tradeDate);
+      const tradeDate = tradeDateIso ? new Date(tradeDateIso + "T00:00:00Z") : null;
 
-      const entryDate = trade.entryDate ? new Date(trade.entryDate) : null;
-      const matchesEntryDate = (!filters.entryDateFrom || (entryDate && entryDate >= new Date(filters.entryDateFrom))) &&
-        (!filters.entryDateTo || (entryDate && entryDate <= new Date(filters.entryDateTo + 'T23:59:59')));
+      const matchesTradeDate = (!filters.tradeDateFrom || (tradeDate && tradeDate >= new Date(filters.tradeDateFrom + "T00:00:00Z"))) &&
+        (!filters.tradeDateTo || (tradeDate && tradeDate <= new Date(filters.tradeDateTo + "T23:59:59Z")));
 
-      const exitDate = trade.exitDate ? new Date(trade.exitDate) : null;
-      const matchesExitDate = (!filters.exitDateFrom || (exitDate && exitDate >= new Date(filters.exitDateFrom))) &&
-        (!filters.exitDateTo || (exitDate && exitDate <= new Date(filters.exitDateTo + 'T23:59:59')));
+      const entryDateIso = trade.entryDate ? getDateOnly(trade.entryDate) : "";
+      const entryDate = entryDateIso ? new Date(entryDateIso + "T00:00:00Z") : null;
+      const matchesEntryDate = (!filters.entryDateFrom || (entryDate && entryDate >= new Date(filters.entryDateFrom + "T00:00:00Z"))) &&
+        (!filters.entryDateTo || (entryDate && entryDate <= new Date(filters.entryDateTo + "T23:59:59Z")));
+
+      const exitDateIso = trade.exitDate ? getDateOnly(trade.exitDate) : "";
+      const exitDate = exitDateIso ? new Date(exitDateIso + "T00:00:00Z") : null;
+      const matchesExitDate = (!filters.exitDateFrom || (exitDate && exitDate >= new Date(filters.exitDateFrom + "T00:00:00Z"))) &&
+        (!filters.exitDateTo || (exitDate && exitDate <= new Date(filters.exitDateTo + "T23:59:59Z")));
 
       const matchesStatus = filters.status === "all" ||
         (filters.status === "active" && !trade.exitPrice) ||
@@ -464,11 +537,21 @@ export function TradeTable() {
       if (range === 'last7') {
         const s = new Date(startOf(today));
         s.setDate(s.getDate() - 6);
-        toExport = base.filter(t => new Date(t.tradeDate) >= s && new Date(t.tradeDate) <= new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59));
+        const sIso = getDateOnly(s.toISOString()) + "T00:00:00Z";
+        const eIso = getDateOnly(today.toISOString()) + "T23:59:59Z";
+        toExport = base.filter(t => {
+          const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
+          return td >= new Date(sIso) && td <= new Date(eIso);
+        });
       } else if (range === 'last30') {
         const s = new Date(startOf(today));
         s.setDate(s.getDate() - 29);
-        toExport = base.filter(t => new Date(t.tradeDate) >= s && new Date(t.tradeDate) <= new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59));
+        const sIso = getDateOnly(s.toISOString()) + "T00:00:00Z";
+        const eIso = getDateOnly(today.toISOString()) + "T23:59:59Z";
+        toExport = base.filter(t => {
+          const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
+          return td >= new Date(sIso) && td <= new Date(eIso);
+        });
       } else if (range === 'custom') {
         setExportCustomOpen(true);
         setExporting(false);
@@ -490,15 +573,15 @@ export function TradeTable() {
       alert("Pick both start and end dates for custom export.");
       return;
     }
-    const s = new Date(`${exportStart}T00:00:00`);
-    const e = new Date(`${exportEnd}T23:59:59`);
+    const s = new Date(`${exportStart}T00:00:00Z`);
+    const e = new Date(`${exportEnd}T23:59:59Z`);
     if (s > e) {
       alert("Start date must be before or equal to end date.");
       return;
     }
     const base = computeFilteredTrades();
     const toExport = base.filter(t => {
-      const td = new Date(t.tradeDate);
+      const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
       return td >= s && td <= e;
     });
 
