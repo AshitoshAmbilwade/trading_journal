@@ -18,7 +18,7 @@ router.get("/", (req: Request, res: Response) => {
 // Mount route modules
 router.use("/auth", authRoutes);
 router.use("/trades", tradesRoutes);
-router.use("/ai-summaries", aiRoutes);
+router.use("/ai", aiRoutes);
 router.use("/export-logs", exportLogRoutes);
 router.use("/gamification", gamificationRoutes);
 router.use("/analytics", analyticsRoutes); 

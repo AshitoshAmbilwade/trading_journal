@@ -13,7 +13,10 @@ const API_BASE = "http://localhost:5000/api";
  */
 const apiClient = axios.create({
   baseURL: API_BASE,
-  timeout: 10000,
+  headers: {
+    "Content-Type": "application/json",
+  },
+  timeout: 90000
 });
 
 // helper to detect "looks like FormData"
