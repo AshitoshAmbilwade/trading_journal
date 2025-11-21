@@ -1,3 +1,4 @@
+// src/api/aiSummries.ts
 import { fetchApi } from "../utils/apiHandler";
 
 // Period types
@@ -7,7 +8,7 @@ export type SummaryPeriod = "daily" | "weekly" | "monthly";
 export interface AISummary {
   _id?: string;
   userId: string;
-  period: SummaryPeriod;
+  type?: "trade" | "weekly" | "monthly";
   dateRange: {
     start: string;
     end: string;
@@ -23,7 +24,7 @@ export interface AISummary {
 
 // Request body for generating a summary
 export interface AISummaryGenerateRequest {
-  type: "trade" | "weekly";
+  type: "trade" | "weekly" | "monthly";
   tradeId?: string;
   startDate?: string;
   endDate?: string;
@@ -36,12 +37,14 @@ export interface AISummaryGenerateRequest {
 // API wrapper
 export const aiSummariesApi = {
   /**
-   * Generate AI summary (trade or weekly)
+   * Generate AI summary (trade or weekly or monthly)
    * POST /api/ai/generate
+   *
+   * Note: we intentionally DO NOT add a leading slash so fetchApi's base prefix (like /api) won't double-up.
    */
   generate: (data: AISummaryGenerateRequest) =>
-    fetchApi<AISummary>({
-      url: "/ai/generate", // Fixed: added proper endpoint path
+    fetchApi<any>({
+      url: "ai/generate",
       method: "POST",
       data,
     }),
@@ -52,7 +55,7 @@ export const aiSummariesApi = {
    */
   list: () =>
     fetchApi<{ summaries: AISummary[] }>({
-      url: "/api/ai", // Fixed: added proper endpoint path
+      url: "ai",
       method: "GET",
     }),
 
@@ -62,7 +65,7 @@ export const aiSummariesApi = {
    */
   getOne: (summaryId: string) =>
     fetchApi<{ aiSummary: AISummary }>({
-      url: `/ai/${summaryId}`, // Fixed: added proper endpoint path
+      url: `ai/${summaryId}`,
       method: "GET",
     }),
 
@@ -72,7 +75,7 @@ export const aiSummariesApi = {
    */
   delete: (summaryId: string) =>
     fetchApi({
-      url: `/ai/${summaryId}`, // Fixed: added proper endpoint path
+      url: `ai/${summaryId}`,
       method: "DELETE",
     }),
 };

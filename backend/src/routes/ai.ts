@@ -5,7 +5,7 @@ import {
   listAISummaries,
   getAISummary,
   deleteAISummary,
-  generateAISummary,   // <-- NEW
+  generateAISummary, // NEW: job-enqueueing entrypoint
 } from "../controllers/aiController.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 
@@ -17,14 +17,15 @@ router.use(authMiddleware);
 /**
  * AI GENERATION ROUTE
  * POST /api/ai/generate
- * Body: { type: "trade" | "weekly", tradeId?, dateRange? }
+ * Body: { type: "trade" | "weekly" | "monthly", tradeId?, dateRange? }
+ *
+ * Returns:
+ *  - 202 + { summaryId } when job was enqueued (draft AISummary created)
+ *  - 4xx for validation / payment errors
  */
-router.post("/generate", generateAISummary);  // <--- IMPORTANT
+router.post("/generate", generateAISummary);
 
-
-/**
- * EXISTING CRUD ROUTES (kept as-is)
- */
+// CRUD routes for AISummaries (unchanged)
 router.post("/", createAISummary);          // POST /api/ai
 router.get("/", listAISummaries);          // GET /api/ai
 router.get("/:id", getAISummary);          // GET /api/ai/:id

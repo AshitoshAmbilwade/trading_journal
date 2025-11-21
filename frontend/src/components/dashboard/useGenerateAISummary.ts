@@ -1,12 +1,11 @@
-// src/components/dashboard/useGenerateAISummary.ts
 "use client";
 
 import { useState, useCallback } from "react";
-import { aiSummariesApi, AISummary } from "@/api/aiSummaries";
+import { aiSummariesApi, AISummary } from "../../api/aiSummaries";
 
 export type GeneratePayload =
   | { type: "trade"; tradeId: string }
-  | { type: "weekly"; startDate?: string; endDate?: string };
+  | { type: "weekly" | "monthly"; startDate?: string; endDate?: string };
 
 export function useGenerateAISummary() {
   const [loading, setLoading] = useState(false);
@@ -19,45 +18,69 @@ export function useGenerateAISummary() {
     setResult(null);
 
     try {
-      // Create proper request body
+      // Build request body for backend
       const body: any = { type: payload.type };
-      
+
       if (payload.type === "trade") {
-        body.tradeId = payload.tradeId;
-      } else if (payload.type === "weekly") {
-        // For weekly summaries, use dateRange object
-        if (payload.startDate) {
+        body.tradeId = (payload as any).tradeId;
+      } else {
+        // weekly/monthly
+        if ((payload as any).startDate) {
           body.dateRange = {
-            start: payload.startDate,
-            end: payload.endDate || payload.startDate,
+            start: (payload as any).startDate,
+            end: (payload as any).endDate || (payload as any).startDate,
           };
         }
       }
 
-      console.log("Sending AI summary request:", body); // Debug log
-
       const res = await aiSummariesApi.generate(body);
-      
-      // Handle different response formats
-      const aiSummary: AISummary = (res && (res as any).aiSummary) 
-        ? (res as any).aiSummary 
-        : (res as any);
-      
+
+      // Backend might return:
+      // 1) { aiSummary: {...} } (immediate) OR
+      // 2) { summaryId: "..." } with 202 (queued)
+      // Our api wrapper returns raw `res` or throws — handle both
+      let aiSummary: AISummary | null = null;
+
+      if (!res) {
+        throw new Error("Empty response from AI service");
+      }
+
+      // If server returned the object directly (older shape)
+      if ((res as any).aiSummary) {
+        aiSummary = (res as any).aiSummary as AISummary;
+      } else if ((res as any).summaryId) {
+        // queued -> create minimal draft object so UI can show a placeholder
+        aiSummary = {
+          _id: (res as any).summaryId,
+          type: payload.type as any,
+          status: "draft",
+          summaryText: "Queued - generating...",
+          generatedAt: new Date().toISOString(),
+        };
+      } else if ((res as any)._id) {
+        // maybe returned the summary directly
+        aiSummary = res as AISummary;
+      } else {
+        // Unknown shape: try to detect aiSummary nested somewhere
+        aiSummary = (res as any).data?.aiSummary || (res as any).data;
+      }
+
+      if (!aiSummary) {
+        throw new Error("Unexpected AI response shape");
+      }
+
       setResult(aiSummary);
       return aiSummary;
     } catch (err: any) {
       console.error("generateAISummary error:", err);
-      
-      // Extract meaningful error message from HTML response if needed
       let message = "Failed to generate AI summary";
       if (err?.message) {
-        if (err.message.includes("<!DOCTYPE html>")) {
-          message = "AI summary service is currently unavailable. Please check if the backend server is running.";
+        if (typeof err.message === "string" && err.message.includes("<!DOCTYPE html>")) {
+          message = "AI summary service is currently unavailable. Check backend.";
         } else {
           message = err.message;
         }
       }
-      
       setError(message);
       throw new Error(message);
     } finally {
