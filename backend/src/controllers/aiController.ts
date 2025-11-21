@@ -36,78 +36,127 @@ function normalizeDateRange(dateRange?: any, fallbackDays = 6) {
   return { start, end };
 }
 
+/* ---------------------------- Robust parsing helpers ---------------------------- */
+
 /**
- * Robust tolerantParse used for inline parsing.
- * - try JSON.parse first
- * - find balanced {...} region if needed
- * - normalize smart quotes, trailing commas, unquoted keys
- * - returns parsed object or null
+ * extractTextFromRaw
+ * Normalize common model response shapes into a single string for parsing.
  */
-function tolerantParseInline(raw: string): any | null {
-  if (!raw) return null;
-  let s = String(raw).trim();
-
-  try {
-    return JSON.parse(s);
-  } catch (e) {
-    // continue tolerant path
+function extractTextFromRaw(raw: any): string {
+  if (raw == null) return "";
+  if (typeof raw === "string") return raw;
+  if (raw.output && typeof raw.output === "string") return raw.output;
+  if (Array.isArray(raw.choices) && raw.choices[0]) {
+    const ch = raw.choices[0];
+    if (ch.message && ch.message.content) return String(ch.message.content);
+    if (ch.text) return String(ch.text);
   }
+  if (raw.content) return String(raw.content);
+  if (raw.result && typeof raw.result === "string") return raw.result;
+  // last resort
+  try {
+    return JSON.stringify(raw);
+  } catch (e) {
+    return String(raw);
+  }
+}
 
-  s = s.replace(/[\u2018\u2019\u201C\u201D]/g, '"'); // smart quotes
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-
-  const firstOpen = s.indexOf("{");
-  if (firstOpen === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  let endIndex = -1;
-
-  for (let i = firstOpen; i < s.length; i++) {
-    const ch = s[i];
-    if (escape) {
-      escape = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escape = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        endIndex = i;
-        break;
+/**
+ * findLargestJsonSubstring
+ * Scans text for balanced { ... } regions and returns the largest one (or null).
+ */
+function findLargestJsonSubstring(text: string): string | null {
+  const chunks: string[] = [];
+  const n = text.length;
+  for (let i = 0; i < n; i++) {
+    if (text[i] === "{") {
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let j = i; j < n; j++) {
+        const ch = text[j];
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = !inString;
+        else if (!inString) {
+          if (ch === "{") depth++;
+          else if (ch === "}") {
+            depth--;
+            if (depth === 0) {
+              chunks.push(text.slice(i, j + 1));
+              i = j; // move outer cursor ahead
+              break;
+            }
+          }
+        }
       }
     }
   }
+  if (chunks.length === 0) return null;
+  chunks.sort((a, b) => b.length - a.length);
+  return chunks[0];
+}
 
-  if (endIndex === -1) {
-    const lastJsonMatch = s.match(/\{[\s\S]*\}$/);
-    if (!lastJsonMatch) return null;
-    s = lastJsonMatch[0];
-  } else {
-    s = s.slice(firstOpen, endIndex + 1);
-  }
+/**
+ * tolerantFixes
+ * Apply common fixes to make the candidate JSON parseable:
+ * - smart quotes -> straight
+ * - strip code fences
+ * - remove trailing commas
+ * - convert single-quoted strings to double-quoted
+ * - quote unquoted keys (best-effort)
+ */
+function tolerantFixes(candidate: string): string {
+  let s = candidate;
+  s = s.replace(/[\u2018\u2019\u201C\u201D]/g, '"');
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  s = s.replace(/,\s*([}\]])/g, "$1");
+  s = s.replace(/'([^']*)'/g, (_m, g1) => `"${g1.replace(/"/g, '\\"')}"`);
+  s = s.replace(/([,{]\s*)([A-Za-z0-9_\-]+)\s*:/g, (_m, p1, p2) => `${p1}"${p2}":`);
+  return s;
+}
 
-  // common fixes
-  s = s.replace(/,\s*([}\]])/g, "$1"); // trailing commas
-  s = s.replace(/'([^']*)'/g, (_m, g1) => `"${g1.replace(/"/g, '\\"')}"`); // single quotes -> double
-  s = s.replace(/([,{]\s*)([A-Za-z0-9_\-]+)\s*:/g, (_m, p1, p2) => `${p1}"${p2}":`); // unquoted keys
-
+/**
+ * parseTolerantInline
+ * Attempts multiple strategies and returns parsed object or null.
+ */
+function parseTolerantInline(raw: any): any | null {
   try {
-    return JSON.parse(s);
+    const text = extractTextFromRaw(raw);
+
+    // fast path: raw text may be pure JSON
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      // continue tolerant path
+    }
+
+    // try to extract largest balanced JSON substring
+    const cand = findLargestJsonSubstring(text);
+    if (cand) {
+      // try with fixes first
+      try {
+        return JSON.parse(tolerantFixes(cand));
+      } catch (e) {
+        // fallback to raw candidate
+        try {
+          return JSON.parse(cand);
+        } catch (err) {
+          // give up below
+        }
+      }
+    }
+
+    // If original raw was an object, return it
+    if (typeof raw === "object") return raw;
+
+    return null;
   } catch (err) {
     return null;
   }
 }
+
+/* ---------------------------- Normalization ---------------------------- */
 
 /** Coerce parsed object to normalized fields used by DB */
 function normalizeParsedInline(parsed: any, inputSnapshot: any) {
@@ -128,7 +177,6 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
     if (!v) return [];
     if (Array.isArray(v)) return v;
     if (typeof v === "string") {
-      // split on newlines or bullet-like characters
       return v.split(/[\r\n•\-]+/).map((s: string) => s.trim()).filter(Boolean);
     }
     return [v];
@@ -144,6 +192,8 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   return out;
 }
 
+/* ---------------------------- Queue helpers ---------------------------- */
+
 /** enqueue helper with sane defaults */
 async function enqueueAiJob(payload: { summaryId: string; type: string; model: string; input: any; userId: string }) {
   const jobOptions = {
@@ -157,6 +207,8 @@ async function enqueueAiJob(payload: { summaryId: string; type: string; model: s
   return aiQueue.add("ai-job", payload, jobOptions);
 }
 
+/* ---------------------------- Inline processing ---------------------------- */
+
 /**
  * Inline processor (same logic as worker)
  * - calls LLM
@@ -168,6 +220,7 @@ async function processInlineAndPersist(summaryId: string, type: string, model: s
   if (type === "trade") messages = tradeSummaryPrompt(input);
   else messages = weeklySummaryPrompt(input);
 
+  // Call the LLM
   const rawResponse = await callChat(model, messages, {
     temperature: type === "trade" ? 0.3 : 0.2,
     max_tokens: type === "trade" ? 500 : 1200,
@@ -175,12 +228,15 @@ async function processInlineAndPersist(summaryId: string, type: string, model: s
   });
 
   const rawStr = typeof rawResponse === "string" ? rawResponse : JSON.stringify(rawResponse);
-  // persist raw early
+
+  // persist raw early (so you never lose raw LLM output)
   await AISummaryModel.findByIdAndUpdate(summaryId, { $set: { rawResponse: rawStr, model, status: "processing" } });
 
-  const parsed = tolerantParseInline(rawStr);
+  // parse using tolerant parser
+  const parsed = parseTolerantInline(rawResponse);
   const normalized = normalizeParsedInline(parsed, input);
 
+  // build final fields with fallback text if parsing failed
   const finalSummaryText = normalized.summaryText || (type === "trade" ? "Trade analysis (fallback)." : "Summary (fallback).");
 
   const updatePayload: any = {
@@ -193,6 +249,25 @@ async function processInlineAndPersist(summaryId: string, type: string, model: s
     generatedAt: new Date(),
   };
 
+  // If parse failed (no parsed object), mark as failed_to_parse instead of ready so free-summary accounting isn't consumed
+  if (!parsed) {
+    // keep rawResponse (already set), mark parse-failed
+    await AISummaryModel.findByIdAndUpdate(summaryId, {
+      $set: {
+        status: "failed_to_parse",
+        // keep summaryText fallback but don't count as ready (so user's free quota isn't consumed)
+        summaryText: finalSummaryText,
+        errorMessage: "Failed to parse LLM output to structured JSON",
+        generatedAt: new Date(),
+      },
+    });
+
+    // return the draft with rawResponse preserved
+    const fresh = await AISummaryModel.findById(summaryId).lean();
+    return fresh;
+  }
+
+  // if parsed OK, persist structured fields
   await AISummaryModel.findByIdAndUpdate(summaryId, { $set: updatePayload });
 
   const fresh = await AISummaryModel.findById(summaryId).lean();
