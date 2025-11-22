@@ -15,73 +15,74 @@ import { connectDB } from "../../db.js";
  * - Extracts largest balanced {...} JSON substring and attempts to parse
  * - Applies tolerant fixes (smart quotes, single quotes, trailing commas, unquoted keys)
  */
+
 function extractTextFromRaw(raw: any): string {
   if (raw == null) return "";
   if (typeof raw === "string") return raw;
-  // Common model wrappers
-  if (raw.output && typeof raw.output === "string") return raw.output;
-  // openai-like
+  if (typeof raw.output === "string") return raw.output;
+  if (raw.response && typeof raw.response === "string") return raw.response;
+
   if (Array.isArray(raw.choices) && raw.choices[0]) {
     const ch = raw.choices[0];
     if (ch.message && ch.message.content) return String(ch.message.content);
     if (ch.text) return String(ch.text);
   }
-  // some SDKs wrap in .content or .result
+
+  if (raw.output && typeof raw.output === "object") {
+    try {
+      return JSON.stringify(raw.output);
+    } catch (e) {}
+  }
   if (raw.content) return String(raw.content);
   if (raw.result && typeof raw.result === "string") return raw.result;
-  // fallback to JSON string
-  return JSON.stringify(raw);
+
+  try {
+    return JSON.stringify(raw);
+  } catch {
+    return String(raw);
+  }
 }
 
 function tolerantFixes(candidate: string): string {
   let s = candidate;
   s = s.replace(/[\u2018\u2019\u201C\u201D]/g, '"'); // smart quotes
   s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  // remove trailing commas like ,}
   s = s.replace(/,\s*([}\]])/g, "$1");
-  // single quotes around strings -> double
   s = s.replace(/'([^']*)'/g, (_m, g1) => `"${g1.replace(/"/g, '\\"')}"`);
-  // add quotes to unquoted keys (best-effort)
   s = s.replace(/([,{]\s*)([A-Za-z0-9_\-]+)\s*:/g, (_m, p1, p2) => `${p1}"${p2}":`);
   return s;
 }
 
-/**
- * Find balanced JSON objects in a text and return the largest candidate.
- * Returns null if none.
- */
 function findLargestJsonSubstring(text: string): string | null {
   const chunks: string[] = [];
   const n = text.length;
   for (let i = 0; i < n; i++) {
-    if (text[i] === "{") {
-      let depth = 0;
-      let inString = false;
-      let escaped = false;
-      for (let j = i; j < n; j++) {
-        const ch = text[j];
-        if (escaped) {
-          escaped = false;
-        } else if (ch === "\\") {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = !inString;
-        } else if (!inString) {
-          if (ch === "{") depth++;
-          else if (ch === "}") {
-            depth--;
-            if (depth === 0) {
-              chunks.push(text.slice(i, j + 1));
-              i = j; // jump forward
-              break;
-            }
+    if (text[i] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < n; j++) {
+      const ch = text[j];
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = !inString;
+      } else if (!inString) {
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            chunks.push(text.slice(i, j + 1));
+            i = j; // jump forward
+            break;
           }
         }
       }
     }
   }
   if (chunks.length === 0) return null;
-  // return largest chunk (most likely the real JSON object)
   chunks.sort((a, b) => b.length - a.length);
   return chunks[0];
 }
@@ -89,26 +90,52 @@ function findLargestJsonSubstring(text: string): string | null {
 function parseTolerant(raw: any): any | null {
   try {
     const text = extractTextFromRaw(raw);
+    if (!text) return null;
+
     // quick direct parse
     try {
-      return JSON.parse(text);
+      const d = JSON.parse(text);
+      if (typeof d === "string") {
+        try {
+          return JSON.parse(d);
+        } catch {
+          return d;
+        }
+      }
+      return d;
     } catch (e) {}
+
     // try balanced substring
     const cand = findLargestJsonSubstring(text);
     if (cand) {
-      const fixed = tolerantFixes(cand);
       try {
-        return JSON.parse(fixed);
+        return JSON.parse(tolerantFixes(cand));
       } catch (e) {
-        // last attempt: try more fixes (already applied above)
         try {
           return JSON.parse(cand);
-        } catch (err) {
-          return null;
+        } catch {
+          // continue
         }
       }
     }
-    // final: try to parse raw as object if it already was an object
+
+    // try first '{' to last '}' piece
+    const first = text.indexOf("{");
+    const last = text.lastIndexOf("}");
+    if (first !== -1 && last !== -1 && last > first) {
+      const piece = text.slice(first, last + 1);
+      try {
+        return JSON.parse(tolerantFixes(piece));
+      } catch (e) {
+        try {
+          return JSON.parse(piece);
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    // final: if raw was already an object, return it
     if (typeof raw === "object") return raw;
     return null;
   } catch (err) {
