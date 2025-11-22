@@ -1,4 +1,3 @@
-// src/components/dashboard/TradeTable.tsx
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -218,17 +217,10 @@ import AdvancedFiltersPanel from './AdvancedFiltersPanel';
 import TradesTableBody from './TradesTableBody';
 import ExportCustomModal from './ExportCustomModal';
 
-// New AI imports
-import GenerateAISummaryButton from './GenerateAISummaryButton';
-import { useGenerateAISummary } from './useGenerateAISummary';
-
 /* ---------------- Component ---------------- */
 
 export function TradeTable() {
   const router = useRouter();
-
-  // AI hook (used for generating summaries after create and for top-level weekly button)
-  const { generate: generateAISummary, loading: aiLoading } = useGenerateAISummary();
 
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
@@ -421,55 +413,13 @@ export function TradeTable() {
 
       if (editingTrade) {
         await tradesApi.update(editingTrade._id!, payload as Trade);
-        // Update flow for edit: keep as before
-        setModalOpen(false);
-        resetForm();
-        await loadTrades();
       } else {
-        // CREATE: capture response so we can generate AI summary for the created trade
-        const created = await tradesApi.create(payload as Trade);
-        setModalOpen(false);
-        resetForm();
-        await loadTrades();
-
-        // If backend returned created trade id/object, trigger AI summary generation for the new trade
-        try {
-          const createdId = (created && ((created as any)._id || (created as any).id)) ? ((created as any)._id || (created as any).id) : undefined;
-          if (createdId) {
-            // Best-effort generation; swallow errors so UX isn't blocked
-            try {
-              await generateAISummary({ type: "trade", tradeId: String(createdId) });
-              // Optional: give user feedback; replace with toast if available
-              // alert("AI summary generated for the newly added trade.");
-              console.log("[TradeTable] AI summary generated for new trade:", createdId);
-            } catch (aiErr) {
-              console.warn("[TradeTable] AI summary generation for new trade failed:", aiErr);
-            }
-          } else {
-            // If create returned nothing useful, try find the latest trade from API and generate for it
-            try {
-              const reloaded = await tradesApi.getAll();
-              const list = Array.isArray(reloaded) ? reloaded : (reloaded && (reloaded as any).trades) || [];
-              if (list.length > 0) {
-                const newest = list[0]; // assuming backend returns newest first; if not, you can sort by createdAt
-                const nid = (newest as any)._id || (newest as any).id;
-                if (nid) {
-                  try {
-                    await generateAISummary({ type: "trade", tradeId: String(nid) });
-                    console.log("[TradeTable] AI summary generated for new trade (fallback using newest):", nid);
-                  } catch (e) {
-                    console.warn("[TradeTable] fallback AI generation failed:", e);
-                  }
-                }
-              }
-            } catch (e) {
-              // ignore
-            }
-          }
-        } catch (e) {
-          console.warn("[TradeTable] error while attempting to auto-generate summary:", e);
-        }
+        await tradesApi.create(payload as Trade);
       }
+
+      setModalOpen(false);
+      resetForm();
+      await loadTrades();
     } catch (err: any) {
       console.error("[TradeTable] Save failed:", err);
       alert(err?.message || "Failed to save trade.");
@@ -713,14 +663,6 @@ export function TradeTable() {
   const winningTrades = filteredTrades.filter(trade => Number((trade as any).pnl || 0) > 0).length;
   const winRate = filteredTrades.length > 0 ? (winningTrades / filteredTrades.length) * 100 : 0;
 
-  // Helper to compute week range for Generate Weekly Summary button
-  const computeLast7Range = () => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - 6);
-    return { start: start.toISOString().split("T")[0], end: end.toISOString().split("T")[0] };
-  };
-
   return (
     <Card className="border border-gray-700 bg-black/80 backdrop-blur-xl hover:border-cyan-500/40 transition-all duration-300">
       <CardHeader className="pb-4">
@@ -734,43 +676,13 @@ export function TradeTable() {
             formatCurrency={formatCurrency}
           />
 
-          {/* Right: Export + Add + AI */}
-          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto items-stretch">
-            {/* Quick CSV export button (new single export button requested) */}
-            <Button
-              onClick={() => handleExport('csv', 'all')}
-              className="min-w-[120px] bg-gray-800 border border-gray-600 hover:bg-gray-700 text-white"
-              disabled={exporting}
-              title="Quick Export CSV of visible trades"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Export CSV
-            </Button>
-
-            {/* Existing ExportDropdown (keeps original behavior) */}
+          {/* Right: Export + Add */}
+          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
             <ExportDropdown
               exporting={exporting}
               handleExport={handleExport}
               setExportCustomOpen={setExportCustomOpen}
             />
-
-            {/* Generate weekly AI summary button (uses existing GenerateAISummaryButton component) */}
-            <GenerateAISummaryButton
-              mode="weekly"
-              className="min-w-[180px] bg-gradient-to-r from-yellow-500 to-cyan-400 hover:opacity-95 text-black font-semibold"
-              startDate={computeLast7Range().start}
-              endDate={computeLast7Range().end}
-              onDone={(s: any) => {
-                console.log("Weekly AI summary generated:", s);
-                // optionally show toast
-              }}
-              onError={(err) => {
-                console.warn("Weekly AI generation error:", err);
-              }}
-            >
-              Generate Weekly Summary
-            </GenerateAISummaryButton>
-
             <Dialog open={modalOpen} onOpenChange={(open) => {
               setModalOpen(open);
               if (!open) {
@@ -899,11 +811,13 @@ export function TradeTable() {
                         type="text"
                         value={formatCurrency(calculatedPnL)}
                         readOnly
-                        className={`bg-gray-800 border-gray-600 font-bold ${calculatedPnL >= 0 ? "text-green-400" : "text-red-400"}`}
+                        className={`bg-gray-800 border-gray-600 font-bold ${
+                          calculatedPnL >= 0 ? "text-green-400" : "text-red-400"
+                        }`}
                       />
                       <p className="text-xs text-gray-400">
-                        {newTrade.type === "Buy"
-                          ? "Buy: (Exit - Entry) × Qty - Brokerage"
+                        {newTrade.type === "Buy" 
+                          ? "Buy: (Exit - Entry) × Qty - Brokerage" 
                           : "Sell: (Entry - Exit) × Qty - Brokerage"}
                       </p>
                     </div>
@@ -1032,7 +946,11 @@ export function TradeTable() {
                   <Button
                     onClick={handleSaveTrade}
                     disabled={saving}
-                    className={`flex-1 font-semibold ${saving ? "bg-gray-600 cursor-not-allowed" : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500"}`}
+                    className={`flex-1 font-semibold ${
+                      saving
+                        ? "bg-gray-600 cursor-not-allowed"
+                        : "bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500"
+                    }`}
                   >
                     {saving ? (
                       <span className="flex items-center justify-center gap-2">
