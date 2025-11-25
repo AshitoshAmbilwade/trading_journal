@@ -51,11 +51,18 @@ export interface ExtendedAISummary {
     weeklyStats?: WeeklyStats;
     currencySymbol?: string;
     tradesSample?: Trade[];
+    period?: string;
+    totalTrades?: number;
+    winningTrades?: number;
+    totalPnL?: number;
+    tradesSampleRaw?: Trade[];
   };
   plusPoints?: string[];
   minusPoints?: string[];
   aiSuggestions?: string[];
-  weeklyStats?: WeeklyStats;
+  weeklyStats?: WeeklyStats;        // parser may put structured stats here
+  stats?: any;                     // legacy
+  narrative?: string;              // long-form narrative produced by LLM
   type?: "weekly" | "monthly" | "trade" | string;
   dateRange?: DateRange;
   summaryText?: string;

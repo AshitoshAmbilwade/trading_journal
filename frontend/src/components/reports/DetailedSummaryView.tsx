@@ -1,26 +1,31 @@
 // src/components/reports/DetailedSummaryView.tsx
-import React from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Calendar, Clock, X, Copy, Crown, Sparkles, TrendingUp, TrendingDown, PieChart, Trophy, Brain, Gem, ChartBar, Coins, Target, Activity, Star, CircleDot, AlertTriangle, Lightbulb } from "lucide-react";
+"use client";
+import React, { useState } from "react";
+import { motion } from "motion/react";
+import {
+  Calendar, Clock, X, Copy, Crown, Sparkles, TrendingUp, TrendingDown, PieChart, Trophy, Brain, Gem, ChartBar, Coins, Target, Activity, Star, CircleDot, AlertTriangle, Lightbulb, ChevronDown, ChevronUp
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import GlassCard from "./GlassCard";
-import { ExtendedAISummary } from "./types";
-import { calculateAdvancedStats, getPnLDisplay, formatDate, formatDateTime, formatCurrency } from "./utils";
+import { ExtendedAISummary, Trade } from "./types";
+import { calculateAdvancedStats, getPnLDisplay, formatCurrency, formatDate, formatDateTime, formatPercentage } from "./utils";
 import PerformanceMetric from "./PerformanceMetric";
 import AdvancedStatCard from "./AdvancedStatCard";
 import TradeCard from "./TradeCard";
 
 const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () => void }> = ({ summary, onClose }) => {
+  const [showRaw, setShowRaw] = useState(false);
   const id = summary._id || summary.id || "";
   const currencySymbol = summary.inputSnapshot?.currencySymbol ?? "₹";
-  const stats = summary.weeklyStats ?? summary.inputSnapshot?.weeklyStats;
-  const trades = summary.inputSnapshot?.tradesSample || summary.snapshot?.tradesSample || summary.trades || [];
+
+  // prefer structured weeklyStats (parser) -> inputSnapshot.weeklyStats -> undefined
+  const stats = (summary.weeklyStats ?? summary.stats ?? summary.inputSnapshot?.weeklyStats) as any;
+  const trades: Trade[] = summary.inputSnapshot?.tradesSample || summary.snapshot?.tradesSample || (summary.trades || []);
   const advancedStats = calculateAdvancedStats(trades, stats);
 
   const pnlNumberForModal = Number(stats?.totalPnL ?? advancedStats.totalPnL);
   const isPositive = !Number.isNaN(pnlNumberForModal) && pnlNumberForModal > 0;
-
   const winRate = Math.round(advancedStats.winRate);
 
   const copyToClipboard = async (text: string) => {
@@ -33,9 +38,17 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
   };
 
   const headerGradient = summary.type === "weekly" ? "from-blue-600/30 to-cyan-600/30 border-blue-500/50" : "from-purple-600/30 to-pink-600/30 border-purple-500/50";
-
   const fallbackStatsForPnL: any = stats ?? { totalPnL: advancedStats.totalPnL, totalPnLDisplay: undefined };
   const pnlDisplay = getPnLDisplay(fallbackStatsForPnL, currencySymbol);
+
+  // narrative fallback: use summary.narrative then normalized summaryText (short)
+  const narrativeText = summary.narrative || summary.rawResponse && typeof summary.rawResponse === "string" && (() => {
+    // attempt to pull a "narrative" key from rawResponse if present
+    try {
+      const parsed = JSON.parse(summary.rawResponse);
+      return parsed.narrative || parsed.narrativeText || null;
+    } catch { return null; }
+  })() || summary.summaryText || "";
 
   return (
     <motion.div
@@ -99,7 +112,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                 trend={isPositive ? "up" : "down"}
                 gradientFrom={isPositive ? "from-emerald-600" : "from-red-600"}
                 gradientTo={isPositive ? "to-teal-600" : "to-rose-600"}
-                subtitle={String(advancedStats.avgPnL)}
+                subtitle={formatPercentage(advancedStats.avgPnL)}
               />
               <PerformanceMetric
                 value={`${winRate}%`}
@@ -138,6 +151,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 sm:gap-8">
               <div className="xl:col-span-2 space-y-6 sm:space-y-8">
+                {/* AI Analysis summaryText */}
                 {summary.summaryText && (
                   <GlassCard className="p-4 sm:p-8">
                     <div className="flex items-center gap-3 mb-4 sm:mb-6">
@@ -148,6 +162,21 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                     </div>
                     <p className="text-gray-300 leading-relaxed text-sm sm:text-lg">
                       {summary.summaryText}
+                    </p>
+                  </GlassCard>
+                )}
+
+                {/* Narrative (long-form) */}
+                {narrativeText && (
+                  <GlassCard className="p-4 sm:p-8">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="h-10 w-10 rounded-2xl bg-indigo-500/20 flex items-center justify-center text-indigo-300 border border-indigo-500/30">
+                        <Star className="h-5 w-5" />
+                      </div>
+                      <h3 className="text-lg sm:text-2xl font-bold text-white">Narrative</h3>
+                    </div>
+                    <p className="text-gray-300 leading-relaxed text-sm sm:text-lg whitespace-pre-wrap">
+                      {narrativeText}
                     </p>
                   </GlassCard>
                 )}
@@ -299,11 +328,11 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                         {advancedStats.sharpeRatio}
                       </span>
                     </div>
-                    {stats?.strategiesUsed && stats.strategiesUsed.filter(s => s).length > 0 && (
+                    {stats?.strategiesUsed && stats.strategiesUsed.filter((s: any) => s).length > 0 && (
                       <div>
                         <span className="text-gray-400 text-sm block mb-2">Strategies Used</span>
                         <div className="flex flex-wrap gap-2">
-                          {stats.strategiesUsed.filter(s => s).map((strategy, idx) => (
+                          {stats.strategiesUsed.filter((s: any) => s).map((strategy: string, idx: number) => (
                             <span key={idx} className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs font-medium border border-blue-500/30">
                               {strategy}
                             </span>
@@ -339,6 +368,29 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                         </Button>
                       </div>
                     </div>
+
+                    {/* Raw response toggle */}
+                    {summary.rawResponse && (
+                      <div className="pt-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-gray-400">Raw AI output</div>
+                          <button onClick={() => setShowRaw(s => !s)} className="text-xs text-gray-300 inline-flex items-center gap-1">
+                            {showRaw ? "Hide" : "Show"} {showRaw ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </button>
+                        </div>
+
+                        {showRaw && (
+                          <div className="mt-2 bg-gray-800/60 border border-gray-700/60 rounded-lg p-3">
+                            <pre className="text-xs text-gray-200 max-h-48 overflow-auto whitespace-pre-wrap">{typeof summary.rawResponse === "string" ? summary.rawResponse : JSON.stringify(summary.rawResponse, null, 2)}</pre>
+                            <div className="flex justify-end mt-2 gap-2">
+                              <Button size="sm" variant="ghost" onClick={() => copyToClipboard(typeof summary.rawResponse === "string" ? summary.rawResponse : JSON.stringify(summary.rawResponse))}>
+                                Copy
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </GlassCard>
               </div>
