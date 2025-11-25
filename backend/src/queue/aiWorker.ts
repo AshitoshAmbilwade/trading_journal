@@ -7,6 +7,38 @@ import { callChat } from "../utils/bytezClient.js";
 import { tradeSummaryPrompt, weeklySummaryPrompt } from "../utils/prompts.js";
 import mongoose from "mongoose";
 import { connectDB } from "../../db.js";
+import Bottleneck from "bottleneck";
+
+/**
+ * AI Worker
+ * - Uses Hugging Face client via src/utils/bytezClient.ts (callChat)
+ * - Rate-limits/concurrency via Bottleneck (configurable)
+ * - Robust tolerant JSON parsing + fallback persistence
+ *
+ * Environment variables (new/used):
+ * - HF_TRADE_MODEL, HF_WEEKLY_MODEL, HF_MONTHLY_MODEL (model ids or full endpoint URLs)
+ * - HF_MAX_CONCURRENCY (default 4)
+ * - HF_MIN_TIME_MS (default 50)
+ * - HF_TIMEOUT_MS (fallback to client)
+ * - AI_QUEUE_THRESHOLD (keeps previous enqueue behavior)
+ */
+
+const DEBUG = process.env.DEBUG_HF === "true" || process.env.DEBUG === "true";
+
+// Bottleneck config (tunable)
+const MAX_CONCURRENCY = Number(process.env.HF_MAX_CONCURRENCY || 4);
+const MIN_TIME_MS = Number(process.env.HF_MIN_TIME_MS || 50);
+
+// Create a single limiter instance to control outgoing LLM traffic from this worker
+const limiter = new Bottleneck({
+  maxConcurrent: MAX_CONCURRENCY,
+  minTime: MIN_TIME_MS,
+});
+
+// Helper to run callChat via limiter
+async function limitedCallChat(model: string, messages: Array<{ role: string; content: string }>, opts: any) {
+  return limiter.schedule(() => callChat(model, messages, opts));
+}
 
 /**
  * Robust LLM output extractor + JSON parser:
@@ -184,18 +216,26 @@ export let aiWorker: Worker;
       if (type === "trade") messages = tradeSummaryPrompt(input);
       else messages = weeklySummaryPrompt(input);
 
+      // model choice fallback: prefer provided model, otherwise env defaults
+      const effectiveModel =
+        model ||
+        (type === "trade"
+          ? process.env.HF_TRADE_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1"
+          : process.env.HF_WEEKLY_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1");
+
       let rawResponse: any = "";
       try {
-        rawResponse = await callChat(model, messages, {
+        // callChat via limiter
+        rawResponse = await limitedCallChat(effectiveModel, messages, {
           temperature: type === "trade" ? 0.3 : 0.2,
           max_tokens: type === "trade" ? 500 : 1200,
-          timeoutMs: 120000,
+          timeoutMs: Number(process.env.HF_TIMEOUT_MS || 120000),
         });
 
+        // Extract plain text for immediate persistence
         const rawText = extractTextFromRaw(rawResponse);
-        // persist raw immediately so we always have the LLM output
         await AISummaryModel.findByIdAndUpdate(summaryId, {
-          $set: { rawResponse: typeof rawText === "string" ? rawText : JSON.stringify(rawText), model },
+          $set: { rawResponse: typeof rawText === "string" ? rawText : JSON.stringify(rawText), model: effectiveModel },
         });
 
         // parse tolerantly
@@ -207,7 +247,7 @@ export let aiWorker: Worker;
           const plusPoints = Array.isArray(parsed.plusPoints) ? parsed.plusPoints : parsed.plusPoints ? [parsed.plusPoints] : [];
           const minusPoints = Array.isArray(parsed.minusPoints) ? parsed.minusPoints : parsed.minusPoints ? [parsed.minusPoints] : [];
           const aiSuggestions = Array.isArray(parsed.aiSuggestions) ? parsed.aiSuggestions : parsed.aiSuggestions ? [parsed.aiSuggestions] : [];
-          const weeklyStats = parsed.weeklyStats || parsed.stats || undefined;
+          const weeklyStats = parsed.weeklyStats || parsed.stats || parsed.monthlyStats || undefined;
 
           await AISummaryModel.findByIdAndUpdate(summaryId, {
             $set: {
@@ -222,13 +262,14 @@ export let aiWorker: Worker;
           });
 
           const fresh = await AISummaryModel.findById(summaryId).lean();
-          console.log(`✅ Worker: completed summaryId=${summaryId} stored summaryText (first100): "${String(fresh?.summaryText || "").slice(0, 100)}"`);
+          console.log(
+            `✅ Worker: completed summaryId=${summaryId} stored summaryText (first100): "${String(fresh?.summaryText || "").slice(0, 100)}"`
+          );
         } else {
           // parsing failed — keep rawResponse but mark processing failed-to-parse, do not mark as READY
           await AISummaryModel.findByIdAndUpdate(summaryId, {
             $set: {
               status: "failed_to_parse",
-              // keep rawResponse already set
               errorMessage: "Failed to parse LLM output to JSON",
             },
           });
@@ -238,7 +279,8 @@ export let aiWorker: Worker;
         return true;
       } catch (err: any) {
         console.error(`❌ Worker error for summaryId=${summaryId}:`, err?.message || err);
-        // attempt to update doc with failure
+
+        // attempt to update doc with failure and raw response if available
         try {
           await AISummaryModel.findByIdAndUpdate(summaryId, {
             $set: {
@@ -250,6 +292,8 @@ export let aiWorker: Worker;
         } catch (upErr) {
           console.error("Failed to update AISummary after worker error:", upErr);
         }
+
+        // Rethrow to allow BullMQ retries/failed handling
         throw err;
       }
     },
@@ -271,5 +315,7 @@ export let aiWorker: Worker;
     }
   });
 
-  console.log("🚀 AI Worker running (ai-processing queue)");
+  console.log(
+    `🚀 AI Worker running (ai-processing queue) — limiter: maxConcurrent=${MAX_CONCURRENCY} minTimeMs=${MIN_TIME_MS}`
+  );
 })();

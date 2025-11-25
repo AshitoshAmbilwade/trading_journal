@@ -1,19 +1,53 @@
 // src/controllers/aiController.ts
 import type { Request, Response } from "express";
 import { Types } from "mongoose";
+import util from "util";
+import Bottleneck from "bottleneck";
 import { AISummaryModel } from "../models/AISummary.js";
 import { TradeModel } from "../models/Trade.js";
 import { UserModel } from "../models/User.js";
 import { aiQueue } from "../queue/aiQueue.js";
 import { callChat } from "../utils/bytezClient.js";
 import { tradeSummaryPrompt, weeklySummaryPrompt, monthlySummaryPrompt } from "../utils/prompts.js";
-import util from "util";
+
+/**
+ * AI Controller (Hugging Face / DeepSeek-R1 ready)
+ *
+ * Environment variables used (see bottom of file for example values):
+ * - HF_API_KEY                -> your HF API key (required)
+ * - HF_BASE_URL               -> optional (default: https://router.huggingface.co/models)
+ * - HF_TRADE_MODEL            -> optional model id for trade summaries (default set below)
+ * - HF_WEEKLY_MODEL           -> optional model id for weekly summaries
+ * - HF_MONTHLY_MODEL          -> optional model id for monthly summaries
+ * - HF_MODEL                  -> generic fallback model id
+ * - HF_TIMEOUT_MS             -> request timeout ms (default 120000)
+ * - HF_MAX_INLINE_CONCURRENCY -> number of concurrent inline HF calls allowed from express (default 2)
+ * - HF_MIN_INLINE_TIME_MS     -> minimum ms between inline calls per limiter (default 100)
+ * - AI_QUEUE_THRESHOLD        -> threshold for inline vs enqueue (default 5)
+ */
+
+/* ---------------------------- small inline limiter ---------------------------- */
+// Prevent the API route from issuing too many concurrent inline HF requests.
+// Configure via HF_MAX_INLINE_CONCURRENCY and HF_MIN_INLINE_TIME_MS env vars.
+const INLINE_MAX_CONCURRENCY = Math.max(1, Number(process.env.HF_MAX_INLINE_CONCURRENCY || 2));
+const INLINE_MIN_TIME_MS = Math.max(0, Number(process.env.HF_MIN_INLINE_TIME_MS || 100));
+
+const inlineLimiter = new Bottleneck({
+  maxConcurrent: INLINE_MAX_CONCURRENCY,
+  minTime: INLINE_MIN_TIME_MS,
+});
+
+// Wrap callChat with limiter so all inline calls go through the same Bottleneck instance.
+async function limitedCallChat(model: string, messages: Array<{ role: string; content: string }>, opts: any) {
+  // schedule ensures concurrency and rate limits are respected
+  return inlineLimiter.schedule(() => callChat(model, messages, opts));
+}
+
+/* ---------------------------- Helpers ---------------------------- */
 
 interface AuthRequest extends Request {
   user?: any;
 }
-
-/* ---------------------------- Helpers ---------------------------- */
 
 /** Check whether user has Premium tier */
 async function isUserPremium(userId: Types.ObjectId) {
@@ -48,28 +82,21 @@ function normalizeDateRange(dateRange?: any, fallbackDays = 6) {
   return { start, end };
 }
 
-/* ---------------------------- Robust parsing helpers ---------------------------- */
+/* ---------------------------- Robust parsing helpers (kept) ---------------------------- */
 
-/**
- * extractTextFromRaw
- * Normalize a variety of model response shapes into plain text.
- */
 function extractTextFromRaw(raw: any): string {
   if (raw == null) return "";
   if (typeof raw === "string") return raw;
 
-  // Common shaped responses
   if (typeof raw.output === "string") return raw.output;
   if (raw.response && typeof raw.response === "string") return raw.response;
 
-  // OpenAI-like shapes
   if (Array.isArray(raw.choices) && raw.choices[0]) {
     const ch = raw.choices[0];
     if (ch.message && ch.message.content) return String(ch.message.content);
     if (ch.text) return String(ch.text);
   }
 
-  // Bytez / other wrappers
   if (raw.output && typeof raw.output === "object") {
     try {
       return JSON.stringify(raw.output);
@@ -78,7 +105,6 @@ function extractTextFromRaw(raw: any): string {
   if (raw.content && typeof raw.content === "string") return raw.content;
   if (raw.result && typeof raw.result === "string") return raw.result;
 
-  // fallback: stringify the object (safe)
   try {
     return JSON.stringify(raw);
   } catch (e) {
@@ -86,21 +112,17 @@ function extractTextFromRaw(raw: any): string {
   }
 }
 
-/** apply common tolerant fixes to candidate JSON string */
 function tolerantFixes(candidate: string): string {
   let s = candidate;
   s = s.replace(/[\u2018\u2019\u201C\u201D]/g, '"'); // smart quotes -> straight
   s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim(); // strip code fences
   s = s.replace(/,\s*([}\]])/g, "$1"); // trailing commas
-  s = s.replace(/\\n/g, "\\n"); // leave escapes alone
-  // single-quoted strings -> double quotes (best-effort)
-  s = s.replace(/'([^']*)'/g, (_m, g1) => `"${g1.replace(/"/g, '\\"')}"`);
-  // naive quote unquoted keys: { key: -> { "key":
-  s = s.replace(/([,{]\s*)([A-Za-z0-9_\-]+)\s*:/g, (_m, p1, p2) => `${p1}"${p2}":`);
+  s = s.replace(/\\n/g, "\\n"); // keep escapes
+  s = s.replace(/'([^']*)'/g, (_m, g1) => `"${g1.replace(/"/g, '\\"')}"`); // single -> double quotes
+  s = s.replace(/([,{]\s*)([A-Za-z0-9_\-]+)\s*:/g, (_m, p1, p2) => `${p1}"${p2}":`); // unquoted keys
   return s;
 }
 
-/** Find largest balanced {...} chunk (if any) */
 function findLargestJsonSubstring(text: string): string | null {
   const chunks: string[] = [];
   const n = text.length;
@@ -135,15 +157,6 @@ function findLargestJsonSubstring(text: string): string | null {
   return chunks[0];
 }
 
-/**
- * parseTolerantInline
- * Aggressive multi-strategy parsing:
- * 1. Try parse(rawText)
- * 2. Try largest balanced {...}
- * 3. Try first '{' to last '}' substring
- * 4. Try tolerantFixes on any candidate
- * 5. If candidate parses to a string containing JSON, parse again
- */
 function parseTolerantInline(raw: any): any | null {
   try {
     const text = extractTextFromRaw(raw);
@@ -152,7 +165,6 @@ function parseTolerantInline(raw: any): any | null {
     // 1) direct parse
     try {
       const d = JSON.parse(text);
-      // If parse yields a JSON string (double-encoded), try again
       if (typeof d === "string") {
         try {
           return JSON.parse(d);
@@ -179,7 +191,7 @@ function parseTolerantInline(raw: any): any | null {
       }
     }
 
-    // 3) first '{' to last '}' substring (covers "JSON then text" cases)
+    // 3) first '{' to last '}' substring
     const first = text.indexOf("{");
     const last = text.lastIndexOf("}");
     if (first !== -1 && last !== -1 && last > first) {
@@ -197,21 +209,19 @@ function parseTolerantInline(raw: any): any | null {
 
     // 4) if raw was already an object, return it
     if (typeof raw === "object") return raw;
-
     return null;
   } catch (err) {
     return null;
   }
 }
 
-/** Coerce parsed object to normalized fields used by DB */
 function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   const out: any = {
     summaryText: "",
     plusPoints: [] as string[],
     minusPoints: [] as string[],
     aiSuggestions: [] as string[],
-    weeklyStats: undefined as any, // reused for weekly/monthly aggregated stats
+    weeklyStats: undefined as any,
   };
 
   if (!parsed) return out;
@@ -223,7 +233,6 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
     if (!v) return [];
     if (Array.isArray(v)) return v;
     if (typeof v === "string") {
-      // split on newlines or bullet-like characters
       return v.split(/[\r\n•\-]+/).map((s: string) => s.trim()).filter(Boolean);
     }
     return [v];
@@ -233,7 +242,6 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   out.minusPoints = toArray(parsed.minusPoints || parsed.negatives || parsed.issues);
   out.aiSuggestions = toArray(parsed.aiSuggestions || parsed.suggestions || parsed.recommendations);
 
-  // Support both 'weeklyStats' and 'monthlyStats' produced by different prompts:
   if (parsed.weeklyStats && typeof parsed.weeklyStats === "object") out.weeklyStats = parsed.weeklyStats;
   else if (parsed.monthlyStats && typeof parsed.monthlyStats === "object") out.weeklyStats = parsed.monthlyStats;
   else out.weeklyStats = parsed.weeklyStats ?? parsed.monthlyStats ?? inputSnapshot ?? undefined;
@@ -241,7 +249,7 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   return out;
 }
 
-/** enqueue helper with sane defaults */
+/* ---------------------------- enqueue helper with sane defaults ---------------------------- */
 async function enqueueAiJob(payload: { summaryId: string; type: string; model: string; input: any; userId: string }) {
   const jobOptions = {
     attempts: 3,
@@ -256,34 +264,39 @@ async function enqueueAiJob(payload: { summaryId: string; type: string; model: s
 
 /* ---------------------------- Inline processing ---------------------------- */
 
-/**
- * Inline processor (same logic as worker)
- * - calls LLM
- * - stores rawResponse first
- * - parses and persists normalized fields
- *
- * Note: conservative token limits used to reduce chance of provider OOM.
- */
 async function processInlineAndPersist(summaryId: string, type: string, model: string, input: any) {
   let messages: Array<{ role: string; content: string }> = [];
   if (type === "trade") messages = tradeSummaryPrompt(input);
   else if (type === "weekly") messages = weeklySummaryPrompt(input);
   else if (type === "monthly") messages = monthlySummaryPrompt(input);
-  else messages = weeklySummaryPrompt(input); // fallback - should not happen
+  else messages = weeklySummaryPrompt(input);
 
-  // tuned token limits (reduce memory use for larger types)
   const opts = {
     temperature: type === "trade" ? 0.3 : 0.2,
-    // monthly summaries need larger tokens; weekly smaller
     max_tokens: type === "trade" ? 400 : type === "monthly" ? 1200 : 800,
-    timeoutMs: 120000,
+    timeoutMs: Number(process.env.HF_TIMEOUT_MS || 120000),
   };
 
-  const rawResponse = await callChat(model, messages, opts);
+  // Effective model fallback order (explicit env overrides first)
+  const effectiveModel =
+    model ||
+    (type === "trade"
+      ? process.env.HF_TRADE_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1"
+      : type === "monthly"
+      ? process.env.HF_MONTHLY_MODEL || process.env.HF_WEEKLY_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1"
+      : process.env.HF_WEEKLY_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1");
+
+  // Try inline call (limited by Bottleneck)
+  let rawResponse: any;
+  try {
+    rawResponse = await limitedCallChat(effectiveModel, messages, opts);
+  } catch (err) {
+    // bubble error up for caller to handle (inline failure -> enqueue)
+    throw err;
+  }
 
   const rawStr = typeof rawResponse === "string" ? rawResponse : JSON.stringify(rawResponse);
-  // persist raw early (so you never lose raw LLM output)
-  await AISummaryModel.findByIdAndUpdate(summaryId, { $set: { rawResponse: rawStr, model, status: "processing" } });
+  await AISummaryModel.findByIdAndUpdate(summaryId, { $set: { rawResponse: rawStr, model: effectiveModel, status: "processing" } });
 
   const parsed = parseTolerantInline(rawResponse);
   const normalized = normalizeParsedInline(parsed, input);
@@ -300,39 +313,27 @@ async function processInlineAndPersist(summaryId: string, type: string, model: s
     generatedAt: new Date(),
   };
 
-  // If parse failed (no parsed object), mark as failed_to_parse instead of ready so free-summary accounting isn't consumed
   if (!parsed) {
-    // keep rawResponse (already set), mark parse-failed
     await AISummaryModel.findByIdAndUpdate(summaryId, {
       $set: {
         status: "failed_to_parse",
-        // keep summaryText fallback but don't count as ready (so user's free quota isn't consumed)
         summaryText: finalSummaryText,
         errorMessage: "Failed to parse LLM output to structured JSON",
         generatedAt: new Date(),
       },
     });
 
-    // return the draft with rawResponse preserved
     const fresh = await AISummaryModel.findById(summaryId).lean();
     return fresh;
   }
 
-  // if parsed OK, persist structured fields
   await AISummaryModel.findByIdAndUpdate(summaryId, { $set: updatePayload });
-
   const fresh = await AISummaryModel.findById(summaryId).lean();
   return fresh;
 }
 
 /* ---------------------------- Inline failure handler ---------------------------- */
 
-/**
- * handleInlineFailure
- * Centralized fallback logic when inline processing throws.
- * - If the error looks like provider GPU OOM / inference 422, enqueue and return 202.
- * - Otherwise attempt to enqueue; if enqueue fails, return 500.
- */
 async function handleInlineFailure(err: any, payload: any, draftId: string, res: Response) {
   const errMsg = String(err?.message || err || "");
   console.error("[aiController] Inline AI processing failed:", util.inspect(err, { depth: null }));
@@ -366,15 +367,8 @@ async function handleInlineFailure(err: any, payload: any, draftId: string, res:
   }
 }
 
-/* ---------------------------- Quota checks ---------------------------- */
+/* ---------------------------- Quota checks (unchanged) ---------------------------- */
 
-/**
- * canUserGenerate
- * Enforce quotas:
- * - Free: 1 weekly (status: "ready") allowed, monthly NOT allowed.
- * - Premium/UltraPremium: up to 4 weekly (ready) & 1 monthly (ready).
- * - Trade summaries: Free -> 10 ready allowed, Premium/UltraPremium -> 30 ready allowed.
- */
 async function canUserGenerate(userId: Types.ObjectId, type: "weekly" | "monthly" | "trade") {
   const premium = await isUserPremium(userId);
   const ultra = await isUserUltraPremium(userId);
@@ -399,8 +393,6 @@ async function canUserGenerate(userId: Types.ObjectId, type: "weekly" | "monthly
   }
 
   if (type === "trade") {
-    // Free users: up to 10 trade summaries (ready)
-    // Premium/Ultra: up to 30 trade summaries (ready)
     const prior = await AISummaryModel.countDocuments({ userId, type: "trade", status: "ready" });
     if (!premium) {
       return { allowed: prior < 10, reason: prior >= 10 ? "free_trade_limit_reached" : null };
@@ -414,16 +406,6 @@ async function canUserGenerate(userId: Types.ObjectId, type: "weekly" | "monthly
 
 /* ---------------------------- Controller: generateAISummary ---------------------------- */
 
-/**
- * Body: { type: "trade"|"weekly"|"monthly", tradeId?, dateRange? }
- *
- * Behavior:
- * - create draft AISummary (status: draft)
- * - if queue load low (AI_QUEUE_THRESHOLD), attempt inline processing and return 200 + aiSummary
- * - else enqueue and return 202 with summaryId
- *
- * Note: quota checks enforce free vs premium behaviour described in requirements.
- */
 export const generateAISummary = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -440,7 +422,6 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
       const { tradeId } = req.body;
       if (!tradeId) return res.status(400).json({ message: "tradeId required for trade summary" });
 
-      // trade quota check
       const quota = await canUserGenerate(userId, "trade");
       if (!quota.allowed) {
         if (quota.reason === "free_trade_limit_reached" || quota.reason === "premium_trade_limit_reached") {
@@ -452,7 +433,6 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
       const trade = await TradeModel.findOne({ _id: tradeId, userId }).lean();
       if (!trade) return res.status(404).json({ message: "Trade not found" });
 
-      // include currency metadata
       const inputSnapshot = {
         _id: String(trade._id),
         symbol: trade.symbol,
@@ -482,7 +462,7 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
       const payload = {
         summaryId: String(draft._id),
         type: "trade",
-        model: process.env.BYTEZ_TRADE_MODEL || "Qwen/Qwen2.5-7B-Instruct",
+        model: process.env.HF_TRADE_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1",
         input: inputSnapshot,
         userId: String(userId),
       };
@@ -517,7 +497,6 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
         return res.status(400).json({ message: e.message || "Invalid dateRange" });
       }
 
-      // Quota enforcement
       const quota = await canUserGenerate(userId, "weekly");
       if (!quota.allowed) {
         if (quota.reason === "free_weekly_limit_reached" || quota.reason === "premium_weekly_limit_reached") {
@@ -554,7 +533,7 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
       const payload = {
         summaryId: String(draft._id),
         type: "weekly",
-        model: process.env.BYTEZ_WEEKLY_MODEL || "Qwen/Qwen2.5-7B-Instruct",
+        model: process.env.HF_WEEKLY_MODEL || process.env.HF_MODEL || process.env.HF_TRADE_MODEL || "deepseek/deepseek-r1",
         input: aggregate,
         userId: String(userId),
       };
@@ -581,7 +560,6 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
 
     /* ------------------ MONTHLY ------------------ */
     if (type === "monthly") {
-      // Monthly allowed only for premium/ultrapremium and limited to 1 ready
       const quota = await canUserGenerate(userId, "monthly");
       if (!quota.allowed) {
         if (quota.reason === "monthly_requires_premium") {
@@ -626,15 +604,10 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
 
       console.debug("[aiController] created monthly AISummary draft:", String(draft._id), "user:", String(userId), "trades:", aggregate.totalTrades);
 
-      // Prefer an explicit monthly model if provided, fall back to weekly/trade models
       const payload = {
         summaryId: String(draft._id),
         type: "monthly",
-        model:
-          process.env.BYTEZ_MONTHLY_MODEL ||
-          process.env.BYTEZ_WEEKLY_MODEL ||
-          process.env.BYTEZ_TRADE_MODEL ||
-          "Qwen/Qwen2.5-7B-Instruct",
+        model: process.env.HF_MONTHLY_MODEL || process.env.HF_WEEKLY_MODEL || process.env.HF_TRADE_MODEL || process.env.HF_MODEL || "deepseek/deepseek-r1",
         input: aggregate,
         userId: String(userId),
       };
@@ -666,9 +639,8 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/* ---------------------------- CRUD endpoints ---------------------------- */
+/* ---------------------------- CRUD endpoints (unchanged behavior) ---------------------------- */
 
-/** createAISummary - manual create (admin-ish) */
 export const createAISummary = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -698,7 +670,6 @@ export const createAISummary = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/** listAISummaries for user */
 export const listAISummaries = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -714,7 +685,6 @@ export const listAISummaries = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/** get single AISummary */
 export const getAISummary = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -732,7 +702,6 @@ export const getAISummary = async (req: AuthRequest, res: Response) => {
   }
 };
 
-/** delete AISummary */
 export const deleteAISummary = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
