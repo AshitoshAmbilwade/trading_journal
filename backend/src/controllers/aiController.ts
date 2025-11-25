@@ -6,7 +6,7 @@ import { TradeModel } from "../models/Trade.js";
 import { UserModel } from "../models/User.js";
 import { aiQueue } from "../queue/aiQueue.js";
 import { callChat } from "../utils/bytezClient.js";
-import { tradeSummaryPrompt, weeklySummaryPrompt } from "../utils/prompts.js";
+import { tradeSummaryPrompt, weeklySummaryPrompt, monthlySummaryPrompt } from "../utils/prompts.js";
 import util from "util";
 
 interface AuthRequest extends Request {
@@ -211,7 +211,7 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
     plusPoints: [] as string[],
     minusPoints: [] as string[],
     aiSuggestions: [] as string[],
-    weeklyStats: undefined as any,
+    weeklyStats: undefined as any, // reused for weekly/monthly aggregated stats
   };
 
   if (!parsed) return out;
@@ -233,8 +233,10 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   out.minusPoints = toArray(parsed.minusPoints || parsed.negatives || parsed.issues);
   out.aiSuggestions = toArray(parsed.aiSuggestions || parsed.suggestions || parsed.recommendations);
 
+  // Support both 'weeklyStats' and 'monthlyStats' produced by different prompts:
   if (parsed.weeklyStats && typeof parsed.weeklyStats === "object") out.weeklyStats = parsed.weeklyStats;
-  else out.weeklyStats = parsed.weeklyStats ?? inputSnapshot ?? undefined;
+  else if (parsed.monthlyStats && typeof parsed.monthlyStats === "object") out.weeklyStats = parsed.monthlyStats;
+  else out.weeklyStats = parsed.weeklyStats ?? parsed.monthlyStats ?? inputSnapshot ?? undefined;
 
   return out;
 }
@@ -265,12 +267,15 @@ async function enqueueAiJob(payload: { summaryId: string; type: string; model: s
 async function processInlineAndPersist(summaryId: string, type: string, model: string, input: any) {
   let messages: Array<{ role: string; content: string }> = [];
   if (type === "trade") messages = tradeSummaryPrompt(input);
-  else messages = weeklySummaryPrompt(input);
+  else if (type === "weekly") messages = weeklySummaryPrompt(input);
+  else if (type === "monthly") messages = monthlySummaryPrompt(input);
+  else messages = weeklySummaryPrompt(input); // fallback - should not happen
 
   // tuned token limits (reduce memory use for larger types)
   const opts = {
     temperature: type === "trade" ? 0.3 : 0.2,
-    max_tokens: type === "trade" ? 400 : 800, // lowered from 500/1200 to be safer
+    // monthly summaries need larger tokens; weekly smaller
+    max_tokens: type === "trade" ? 400 : type === "monthly" ? 1200 : 800,
     timeoutMs: 120000,
   };
 
@@ -621,10 +626,15 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
 
       console.debug("[aiController] created monthly AISummary draft:", String(draft._id), "user:", String(userId), "trades:", aggregate.totalTrades);
 
+      // Prefer an explicit monthly model if provided, fall back to weekly/trade models
       const payload = {
         summaryId: String(draft._id),
         type: "monthly",
-        model: process.env.BYTEZ_WEEKLY_MODEL || process.env.BYTEZ_TRADE_MODEL || "Qwen/Qwen2.5-7B-Instruct",
+        model:
+          process.env.BYTEZ_MONTHLY_MODEL ||
+          process.env.BYTEZ_WEEKLY_MODEL ||
+          process.env.BYTEZ_TRADE_MODEL ||
+          "Qwen/Qwen2.5-7B-Instruct",
         input: aggregate,
         userId: String(userId),
       };

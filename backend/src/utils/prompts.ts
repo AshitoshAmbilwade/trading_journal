@@ -57,7 +57,7 @@ export function weeklySummaryPrompt(aggregate: any) {
 
 REQUIRED JSON FORMAT:
 {
-  "summaryText": "string (concise weekly summary)",
+  "summaryText": "string (concise weekly summary  in full detailed)",
   "plusPoints": ["string", "string", "string"],
   "minusPoints": ["string", "string", "string"],
   "aiSuggestions": ["string", "string", "string"],
@@ -87,6 +87,53 @@ RULES:
     {
       role: "user",
       content: `Analyze this weekly trading data and return JSON analysis (use ₹ for all money display fields):
+
+${stats}`
+    }
+  ];
+}
+
+export function monthlySummaryPrompt(aggregate: any) {
+  const stats = JSON.stringify(aggregate, null, 2);
+
+  return [
+    commonSystemCurrencyNote("system"),
+    {
+      role: "system",
+      content: `You are a trading performance coach. Analyze the monthly trading data and return ONLY valid JSON.
+
+REQUIRED JSON FORMAT:
+{
+  "summaryText": "string (concise monthly summary in full detailed)",
+  "plusPoints": ["string", "string", "string"],
+  "minusPoints": ["string", "string", "string"],
+  "aiSuggestions": ["string", "string", "string"],
+  "monthlyStats": {
+    "totalTrades": number,
+    "winningTrades": number,
+    "losingTrades": number,
+    "winRatePct": number,
+    "totalPnL": number,            // in INR (plain number)
+    "totalPnLDisplay": "string",   // formatted with ₹ symbol, e.g. "₹1,150"
+    "avgPnLPerTrade": number,
+    "bestTrade": { "symbol": "string", "pnl": number, "pnlDisplay": "string", "date": "string" },
+    "worstTrade": { "symbol": "string", "pnl": number, "pnlDisplay": "string", "date": "string" },
+    "strategiesUsed": ["string"],
+    "dominantIssues": ["string"]
+  },
+  "narrative": "string (detailed performance analysis)"
+}
+
+RULES:
+- Be objective and data-driven.
+- Numbers in the nested weeklyStats must be numeric types (not strings) except the explicit *Display* fields (pnlDisplay / totalPnLDisplay) which must use '₹'.
+- When you convert numeric PnL to display strings use the rupee symbol (e.g. \"₹1,150\"). Ensure consistency: numeric fields hold raw values (e.g. 1150), *Display fields* hold formatted strings with '₹'.
+- Identify recurring patterns, root causes and provide concrete next-step actions.
+- Return ONLY the JSON object, no extra commentary.`
+    },
+    {
+      role: "user",
+      content: `Analyze this monthly trading data and return JSON analysis (use ₹ for all money display fields):
 
 ${stats}`
     }
