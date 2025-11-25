@@ -6,7 +6,7 @@ import { TradeModel } from "../models/Trade.js";
 import { UserModel } from "../models/User.js";
 import { aiQueue } from "../queue/aiQueue.js";
 import { callChat } from "../utils/bytezClient.js";
-import { tradeSummaryPrompt, weeklySummaryPrompt, monthlySummaryPrompt } from "../utils/prompts.js";
+import { tradeSummaryPrompt, weeklySummaryPrompt } from "../utils/prompts.js";
 import util from "util";
 
 interface AuthRequest extends Request {
@@ -204,26 +204,19 @@ function parseTolerantInline(raw: any): any | null {
   }
 }
 
-/* ---------------------------- normalizeParsedInline (UPDATED) ---------------------------- */
-
-/**
- * normalizeParsedInline(parsed, inputSnapshot, type)
- * Returns normalized fields and ensures monthly/week stats are mapped correctly.
- */
-function normalizeParsedInline(parsed: any, inputSnapshot: any, type: string) {
+/** Coerce parsed object to normalized fields used by DB */
+function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   const out: any = {
     summaryText: "",
     plusPoints: [] as string[],
     minusPoints: [] as string[],
     aiSuggestions: [] as string[],
     weeklyStats: undefined as any,
-    monthlyStats: undefined as any,
-    narrative: "",
   };
 
   if (!parsed) return out;
 
-  const possibleSummary = parsed.summaryText || parsed.summary || parsed.narrative || parsed.text || parsed.description;
+  const possibleSummary = parsed.summaryText || parsed.summary || parsed.narrative || parsed.text;
   out.summaryText = typeof possibleSummary === "string" ? possibleSummary : "";
 
   const toArray = (v: any) => {
@@ -236,41 +229,17 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any, type: string) {
     return [v];
   };
 
-  out.plusPoints = toArray(parsed.plusPoints || parsed.positives || parsed.advantages || parsed.strengths);
-  out.minusPoints = toArray(parsed.minusPoints || parsed.negatives || parsed.issues || parsed.weaknesses);
-  out.aiSuggestions = toArray(parsed.aiSuggestions || parsed.suggestions || parsed.recommendations || parsed.actions);
+  out.plusPoints = toArray(parsed.plusPoints || parsed.positives || parsed.advantages);
+  out.minusPoints = toArray(parsed.minusPoints || parsed.negatives || parsed.issues);
+  out.aiSuggestions = toArray(parsed.aiSuggestions || parsed.suggestions || parsed.recommendations);
 
-  // narrative (user-facing paragraph(s))
-  if (typeof parsed.narrative === "string" && parsed.narrative.trim() !== "") {
-    out.narrative = parsed.narrative.trim();
-  } else if (typeof parsed.narrative === "object") {
-    try {
-      out.narrative = JSON.stringify(parsed.narrative);
-    } catch (e) {
-      out.narrative = "";
-    }
-  } else if (typeof parsed.description === "string" && !out.narrative) {
-    out.narrative = parsed.description.trim();
-  }
-
-  // Prefer explicit weekly/monthly containers
   if (parsed.weeklyStats && typeof parsed.weeklyStats === "object") out.weeklyStats = parsed.weeklyStats;
-  if (parsed.monthlyStats && typeof parsed.monthlyStats === "object") out.monthlyStats = parsed.monthlyStats;
-
-  // fallback: attempt to use top-level numeric/stat fields or inputSnapshot
-  if (!out.weeklyStats && !out.monthlyStats) {
-    const possibleStats = parsed.weeklyStats || parsed.monthlyStats || parsed.stats || inputSnapshot;
-    if (possibleStats && typeof possibleStats === "object") {
-      if (type === "monthly") out.monthlyStats = possibleStats;
-      else out.weeklyStats = possibleStats;
-    }
-  }
+  else out.weeklyStats = parsed.weeklyStats ?? inputSnapshot ?? undefined;
 
   return out;
 }
 
-/* ---------------------------- enqueue helper ---------------------------- */
-
+/** enqueue helper with sane defaults */
 async function enqueueAiJob(payload: { summaryId: string; type: string; model: string; input: any; userId: string }) {
   const jobOptions = {
     attempts: 3,
@@ -283,35 +252,36 @@ async function enqueueAiJob(payload: { summaryId: string; type: string; model: s
   return aiQueue.add("ai-job", payload, jobOptions);
 }
 
-/* ---------------------------- Inline processing (UPDATED to support monthly) ---------------------------- */
+/* ---------------------------- Inline processing ---------------------------- */
 
 /**
  * Inline processor (same logic as worker)
  * - calls LLM
- * - stores rawResponse early (processing)
- * - parses and persists normalized fields (summaryText, plus/minus, aiSuggestions, monthly/weekly stats, narrative)
+ * - stores rawResponse first
+ * - parses and persists normalized fields
+ *
+ * Note: conservative token limits used to reduce chance of provider OOM.
  */
 async function processInlineAndPersist(summaryId: string, type: string, model: string, input: any) {
   let messages: Array<{ role: string; content: string }> = [];
   if (type === "trade") messages = tradeSummaryPrompt(input);
-  else if (type === "monthly") messages = monthlySummaryPrompt(input);
   else messages = weeklySummaryPrompt(input);
 
   // tuned token limits (reduce memory use for larger types)
   const opts = {
     temperature: type === "trade" ? 0.3 : 0.2,
-    max_tokens: type === "trade" ? 400 : 1000, // monthly may need slightly larger output
+    max_tokens: type === "trade" ? 400 : 800, // lowered from 500/1200 to be safer
     timeoutMs: 120000,
   };
 
   const rawResponse = await callChat(model, messages, opts);
 
   const rawStr = typeof rawResponse === "string" ? rawResponse : JSON.stringify(rawResponse);
-  // persist raw early (so you never lose raw LLM output) and mark processing
+  // persist raw early (so you never lose raw LLM output)
   await AISummaryModel.findByIdAndUpdate(summaryId, { $set: { rawResponse: rawStr, model, status: "processing" } });
 
   const parsed = parseTolerantInline(rawResponse);
-  const normalized = normalizeParsedInline(parsed, input, type);
+  const normalized = normalizeParsedInline(parsed, input);
 
   const finalSummaryText = normalized.summaryText || (type === "trade" ? "Trade analysis (fallback)." : "Summary (fallback).");
 
@@ -320,19 +290,10 @@ async function processInlineAndPersist(summaryId: string, type: string, model: s
     plusPoints: Array.isArray(normalized.plusPoints) ? normalized.plusPoints : [],
     minusPoints: Array.isArray(normalized.minusPoints) ? normalized.minusPoints : [],
     aiSuggestions: Array.isArray(normalized.aiSuggestions) ? normalized.aiSuggestions : [],
-    narrative: normalized.narrative || "",
+    weeklyStats: normalized.weeklyStats || undefined,
     status: "ready",
     generatedAt: new Date(),
   };
-
-  // attach structured stats to the correct field
-  if (type === "monthly") {
-    if (normalized.monthlyStats) updatePayload.monthlyStats = normalized.monthlyStats;
-    else if (normalized.weeklyStats) updatePayload.monthlyStats = normalized.weeklyStats; // fallback
-  } else {
-    if (normalized.weeklyStats) updatePayload.weeklyStats = normalized.weeklyStats;
-    else if (normalized.monthlyStats) updatePayload.weeklyStats = normalized.monthlyStats; // fallback
-  }
 
   // If parse failed (no parsed object), mark as failed_to_parse instead of ready so free-summary accounting isn't consumed
   if (!parsed) {
@@ -663,7 +624,7 @@ export const generateAISummary = async (req: AuthRequest, res: Response) => {
       const payload = {
         summaryId: String(draft._id),
         type: "monthly",
-        model: process.env.BYTEZ_MONTHLY_MODEL || process.env.BYTEZ_WEEKLY_MODEL || process.env.BYTEZ_TRADE_MODEL || "Qwen/Qwen2.5-7B-Instruct",
+        model: process.env.BYTEZ_WEEKLY_MODEL || process.env.BYTEZ_TRADE_MODEL || "Qwen/Qwen2.5-7B-Instruct",
         input: aggregate,
         userId: String(userId),
       };
@@ -778,6 +739,3 @@ export const deleteAISummary = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ message: err?.message || "Error deleting AI summary" });
   }
 };
-
-// Export internals for testing/debugging if needed
-export { processInlineAndPersist, normalizeParsedInline };
