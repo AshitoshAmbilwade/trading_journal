@@ -6,7 +6,7 @@ import { Router, useRouter } from "../../utils/routes";
 import { AppLayout } from "../../components/AppLayout";
 import { Dashboard } from "./Dashboard";
 import { TradeBuddy } from "./TradeBuddy";
-import { Reports } from "./Reports";
+import  Reports  from "./Reports";
 import { Settings } from "./Settings";
 import { AnalyticsShell } from "../../components/analytics";
 import TradingLabStrategiesPage from "./../trading-lab/strategies/page";

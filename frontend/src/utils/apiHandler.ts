@@ -16,7 +16,7 @@ const apiClient = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 90000
+  timeout: 150000
 });
 
 // helper to detect "looks like FormData"
