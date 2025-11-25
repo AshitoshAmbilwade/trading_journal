@@ -175,6 +175,21 @@ function parseTolerant(raw: any): any | null {
   }
 }
 
+/* ---------------------------- small helper to safely limit logged length ---------------------------- */
+function short(s: any, n = 2000) {
+  try {
+    if (s == null) return String(s);
+    const str = typeof s === "string" ? s : JSON.stringify(s);
+    return str.length > n ? str.slice(0, n) + `... (truncated ${str.length - n} chars)` : str;
+  } catch {
+    try {
+      return String(s).slice(0, n);
+    } catch {
+      return "[unable to stringify]";
+    }
+  }
+}
+
 async function ensureDbConnected() {
   const uri = process.env.MONGO_URI || process.env.MONGODB_URI || "";
   if (!uri) throw new Error("MONGO_URI or MONGODB_URI not set in environment for worker");
@@ -232,6 +247,14 @@ export let aiWorker: Worker;
           timeoutMs: Number(process.env.HF_TIMEOUT_MS || 120000),
         });
 
+        // Log rawResponse safely (truncated)
+        if (DEBUG) {
+          console.log(`[HF RAW] summaryId=${summaryId} model=${effectiveModel} rawResponse: ${short(rawResponse, 2000)}`);
+        } else {
+          // still log small snippet so you can correlate docs
+          console.log(`[HF RAW] summaryId=${summaryId} model=${effectiveModel} rawResponse (first200): ${short(rawResponse, 200)}`);
+        }
+
         // Extract plain text for immediate persistence
         const rawText = extractTextFromRaw(rawResponse);
         await AISummaryModel.findByIdAndUpdate(summaryId, {
@@ -249,6 +272,10 @@ export let aiWorker: Worker;
           const aiSuggestions = Array.isArray(parsed.aiSuggestions) ? parsed.aiSuggestions : parsed.aiSuggestions ? [parsed.aiSuggestions] : [];
           const weeklyStats = parsed.weeklyStats || parsed.stats || parsed.monthlyStats || undefined;
 
+          // Log parsed object (truncated) for debugging / audit
+          if (DEBUG) console.log(`[HF PARSED] summaryId=${summaryId} parsed: ${short(parsed, 2000)}`);
+          else console.log(`[HF PARSED] summaryId=${summaryId} parsed summaryText (first200): ${short(summaryText, 200)}`);
+
           await AISummaryModel.findByIdAndUpdate(summaryId, {
             $set: {
               summaryText: summaryText || "",
@@ -262,9 +289,13 @@ export let aiWorker: Worker;
           });
 
           const fresh = await AISummaryModel.findById(summaryId).lean();
+
+          // Log final stored document (truncated)
           console.log(
-            `✅ Worker: completed summaryId=${summaryId} stored summaryText (first100): "${String(fresh?.summaryText || "").slice(0, 100)}"`
+            `✅ Worker: completed summaryId=${summaryId} stored summaryText (first200): "${String(fresh?.summaryText || "").slice(0, 200)}"`
           );
+          if (DEBUG) console.log(`[HF STORED FULL] summaryId=${summaryId} doc: ${short(fresh, 2000)}`);
+
         } else {
           // parsing failed — keep rawResponse but mark processing failed-to-parse, do not mark as READY
           await AISummaryModel.findByIdAndUpdate(summaryId, {
@@ -274,6 +305,7 @@ export let aiWorker: Worker;
             },
           });
           console.warn(`⚠️ Worker: parsed=null for summaryId=${summaryId} — raw saved to rawResponse`);
+          if (DEBUG) console.warn(`[HF RAW ON FAIL] summaryId=${summaryId} rawResponse: ${short(rawResponse, 2000)}`);
         }
 
         return true;

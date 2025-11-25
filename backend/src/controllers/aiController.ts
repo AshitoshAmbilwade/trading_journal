@@ -249,6 +249,23 @@ function normalizeParsedInline(parsed: any, inputSnapshot: any) {
   return out;
 }
 
+/* ---------------------------- small helper to safely limit logged length ---------------------------- */
+const DEBUG = process.env.DEBUG_HF === "true" || process.env.DEBUG === "true";
+
+function short(s: any, n = 2000) {
+  try {
+    if (s == null) return String(s);
+    const str = typeof s === "string" ? s : JSON.stringify(s);
+    return str.length > n ? str.slice(0, n) + `... (truncated ${str.length - n} chars)` : str;
+  } catch {
+    try {
+      return String(s).slice(0, n);
+    } catch {
+      return "[unable to stringify]";
+    }
+  }
+}
+
 /* ---------------------------- enqueue helper with sane defaults ---------------------------- */
 async function enqueueAiJob(payload: { summaryId: string; type: string; model: string; input: any; userId: string }) {
   const jobOptions = {
@@ -288,48 +305,94 @@ async function processInlineAndPersist(summaryId: string, type: string, model: s
 
   // Try inline call (limited by Bottleneck)
   let rawResponse: any;
+  const startedAt = Date.now();
   try {
+    const callStart = Date.now();
     rawResponse = await limitedCallChat(effectiveModel, messages, opts);
-  } catch (err) {
+    const callEnd = Date.now();
+
+    // Log rawResponse safely (truncated) and timing
+    if (DEBUG) {
+      console.log(`[aiController][HF RAW] summaryId=${summaryId} model=${effectiveModel} hf_ms=${callEnd - callStart} raw: ${short(rawResponse, 4000)}`);
+    } else {
+      console.log(`[aiController][HF RAW] summaryId=${summaryId} model=${effectiveModel} hf_ms=${callEnd - callStart} raw_snippet: ${short(rawResponse, 200)}`);
+    }
+
+    const rawStr = typeof rawResponse === "string" ? rawResponse : JSON.stringify(rawResponse);
+    await AISummaryModel.findByIdAndUpdate(summaryId, { $set: { rawResponse: rawStr, model: effectiveModel, status: "processing" } });
+
+    // Parsing
+    const parseStart = Date.now();
+    const parsed = parseTolerantInline(rawResponse);
+    const normalized = normalizeParsedInline(parsed, input);
+    const parseEnd = Date.now();
+
+    if (parsed) {
+      if (DEBUG) console.log(`[aiController][HF PARSED] summaryId=${summaryId} parse_ms=${parseEnd - parseStart} parsed=${short(parsed, 3000)}`);
+      else console.log(`[aiController][HF PARSED] summaryId=${summaryId} parse_ms=${parseEnd - parseStart} summaryText_snippet=${short(normalized.summaryText, 200)}`);
+    } else {
+      console.warn(`[aiController][HF PARSED] summaryId=${summaryId} parse_ms=${parseEnd - parseStart} parsed=null`);
+    }
+
+    const finalSummaryText = normalized.summaryText || (type === "trade" ? "Trade analysis (fallback)." : "Summary (fallback).");
+
+    const updatePayload: any = {
+      summaryText: finalSummaryText,
+      plusPoints: Array.isArray(normalized.plusPoints) ? normalized.plusPoints : [],
+      minusPoints: Array.isArray(normalized.minusPoints) ? normalized.minusPoints : [],
+      aiSuggestions: Array.isArray(normalized.aiSuggestions) ? normalized.aiSuggestions : [],
+      weeklyStats: normalized.weeklyStats || undefined,
+      status: "ready",
+      generatedAt: new Date(),
+    };
+
+    if (!parsed) {
+      await AISummaryModel.findByIdAndUpdate(summaryId, {
+        $set: {
+          status: "failed_to_parse",
+          summaryText: finalSummaryText,
+          errorMessage: "Failed to parse LLM output to structured JSON",
+          generatedAt: new Date(),
+        },
+      });
+
+      const fresh = await AISummaryModel.findById(summaryId).lean();
+      const finishedAt = Date.now();
+      console.log(
+        `[aiController][DONE] summaryId=${summaryId} model=${effectiveModel} total_ms=${finishedAt - startedAt} status=failed_to_parse summaryText_snippet=${short(
+          finalSummaryText,
+          200
+        )}`
+      );
+      if (DEBUG) console.log(`[aiController][STORED_FULL] summaryId=${summaryId} doc=${short(fresh, 3000)}`);
+      return fresh;
+    }
+
+    const dbStart = Date.now();
+    await AISummaryModel.findByIdAndUpdate(summaryId, { $set: updatePayload });
+    const fresh = await AISummaryModel.findById(summaryId).lean();
+    const dbEnd = Date.now();
+    const finishedAt = Date.now();
+
+    console.log(
+      `[aiController][DONE] summaryId=${summaryId} model=${effectiveModel} total_ms=${finishedAt - startedAt} hf_ms=${callEnd - callStart} parse_ms=${parseEnd -
+        parseStart} db_ms=${dbEnd - dbStart} summaryText_snippet=${short(finalSummaryText, 200)}`
+    );
+
+    if (DEBUG) {
+      console.log(`[aiController][STORED_FULL] summaryId=${summaryId} doc=${short(fresh, 3000)}`);
+    }
+
+    return fresh;
+  } catch (err: any) {
+    const finishedAt = Date.now();
+    console.error(
+      `[aiController][ERROR] summaryId=${summaryId} model=${effectiveModel} total_ms=${finishedAt - startedAt} error:`,
+      util.inspect(err, { depth: null })
+    );
     // bubble error up for caller to handle (inline failure -> enqueue)
     throw err;
   }
-
-  const rawStr = typeof rawResponse === "string" ? rawResponse : JSON.stringify(rawResponse);
-  await AISummaryModel.findByIdAndUpdate(summaryId, { $set: { rawResponse: rawStr, model: effectiveModel, status: "processing" } });
-
-  const parsed = parseTolerantInline(rawResponse);
-  const normalized = normalizeParsedInline(parsed, input);
-
-  const finalSummaryText = normalized.summaryText || (type === "trade" ? "Trade analysis (fallback)." : "Summary (fallback).");
-
-  const updatePayload: any = {
-    summaryText: finalSummaryText,
-    plusPoints: Array.isArray(normalized.plusPoints) ? normalized.plusPoints : [],
-    minusPoints: Array.isArray(normalized.minusPoints) ? normalized.minusPoints : [],
-    aiSuggestions: Array.isArray(normalized.aiSuggestions) ? normalized.aiSuggestions : [],
-    weeklyStats: normalized.weeklyStats || undefined,
-    status: "ready",
-    generatedAt: new Date(),
-  };
-
-  if (!parsed) {
-    await AISummaryModel.findByIdAndUpdate(summaryId, {
-      $set: {
-        status: "failed_to_parse",
-        summaryText: finalSummaryText,
-        errorMessage: "Failed to parse LLM output to structured JSON",
-        generatedAt: new Date(),
-      },
-    });
-
-    const fresh = await AISummaryModel.findById(summaryId).lean();
-    return fresh;
-  }
-
-  await AISummaryModel.findByIdAndUpdate(summaryId, { $set: updatePayload });
-  const fresh = await AISummaryModel.findById(summaryId).lean();
-  return fresh;
 }
 
 /* ---------------------------- Inline failure handler ---------------------------- */
