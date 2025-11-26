@@ -36,12 +36,12 @@ export interface Trade {
 /**
  * Build FormData or JSON payload depending on image type
  */
-function buildPayload(trade: Trade): FormData | Record<string, any> {
+function buildPayload(trade: Trade): FormData | Record<string, unknown> {
   const img = trade.image;
   const hasFile = typeof File !== "undefined" && img instanceof File;
 
   // Prepare sanitized trade data (no undefined/null)
-  const cleanData: Record<string, any> = {};
+  const cleanData: Record<string, unknown> = {};
   Object.entries(trade).forEach(([k, v]) => {
     if (v === undefined || v === null) return;
     cleanData[k] = v;

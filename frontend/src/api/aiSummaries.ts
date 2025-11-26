@@ -1,4 +1,4 @@
-// src/api/aiSummries.ts
+// src/api/aiSummaries.ts
 import { fetchApi } from "../utils/apiHandler";
 
 // Period types
@@ -34,16 +34,33 @@ export interface AISummaryGenerateRequest {
   };
 }
 
+// Expected API responses
+export interface AISummaryGenerateResponse {
+  aiSummary: AISummary;
+  success?: boolean;
+}
+
+export interface AISummaryListResponse {
+  summaries: AISummary[];
+}
+
+export interface AISummaryGetOneResponse {
+  aiSummary: AISummary;
+}
+
+export interface GenericDeleteResponse {
+  success: boolean;
+  message?: string;
+}
+
 // API wrapper
 export const aiSummariesApi = {
   /**
    * Generate AI summary (trade or weekly or monthly)
    * POST /api/ai/generate
-   *
-   * Note: we intentionally DO NOT add a leading slash so fetchApi's base prefix (like /api) won't double-up.
    */
   generate: (data: AISummaryGenerateRequest) =>
-    fetchApi<any>({
+    fetchApi<AISummaryGenerateResponse>({
       url: "ai/generate",
       method: "POST",
       data,
@@ -54,7 +71,7 @@ export const aiSummariesApi = {
    * GET /api/ai
    */
   list: () =>
-    fetchApi<{ summaries: AISummary[] }>({
+    fetchApi<AISummaryListResponse>({
       url: "ai",
       method: "GET",
     }),
@@ -64,7 +81,7 @@ export const aiSummariesApi = {
    * GET /api/ai/:id
    */
   getOne: (summaryId: string) =>
-    fetchApi<{ aiSummary: AISummary }>({
+    fetchApi<AISummaryGetOneResponse>({
       url: `ai/${summaryId}`,
       method: "GET",
     }),
@@ -74,7 +91,7 @@ export const aiSummariesApi = {
    * DELETE /api/ai/:id
    */
   delete: (summaryId: string) =>
-    fetchApi({
+    fetchApi<GenericDeleteResponse>({
       url: `ai/${summaryId}`,
       method: "DELETE",
     }),

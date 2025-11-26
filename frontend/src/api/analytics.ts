@@ -56,7 +56,9 @@ export interface Trade {
   tradeDate?: string; // ISO (if present)
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: any;
+  // allow additional fields but avoid `any`
+  // use unknown to keep type-safety
+  [key: string]: unknown;
 }
 
 /* --------------------- Filters --------------------- */
@@ -84,8 +86,8 @@ export const analyticsApi = {
    * GET /analytics/summary
    */
   getSummary: (filters?: AnalyticsFilters): Promise<AnalyticsSummary> =>
-    fetchApi({
-      url: "/analytics/summary",
+    fetchApi<AnalyticsSummary>({
+      url: "analytics/summary",
       method: "GET",
       params: filters,
     }),
@@ -101,8 +103,8 @@ export const analyticsApi = {
       to?: string;
     }
   ): Promise<AnalyticsTimeSeriesItem[]> =>
-    fetchApi({
-      url: "/analytics/timeseries",
+    fetchApi<AnalyticsTimeSeriesItem[]>({
+      url: "analytics/timeseries",
       method: "GET",
       params,
     }),
@@ -115,8 +117,8 @@ export const analyticsApi = {
     by: "segment" | "tradeType" | "strategy" | "type" | "session" = "segment",
     filters?: AnalyticsFilters
   ): Promise<AnalyticsDistributionItem[]> =>
-    fetchApi({
-      url: "/analytics/distribution",
+    fetchApi<AnalyticsDistributionItem[]>({
+      url: "analytics/distribution",
       method: "GET",
       params: { by, ...(filters || {}) },
     }),
@@ -128,8 +130,8 @@ export const analyticsApi = {
    * Returns: Trade[]
    */
   getTrades: (filters?: AnalyticsFilters): Promise<Trade[]> =>
-    fetchApi({
-      url: "/analytics/trades",
+    fetchApi<Trade[]>({
+      url: "analytics/trades",
       method: "GET",
       params: filters,
     }),

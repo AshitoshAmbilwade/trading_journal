@@ -1,14 +1,6 @@
 // src/api/strategies.ts
 import { fetchApi } from "../utils/apiHandler";
 
-/**
- * Strategy API client
- *
- * Note:
- * - Auth header is attached by apiHandler interceptor (reads token from localStorage).
- * - Errors from fetchApi will throw the backend payload (or a friendly error).
- */
-
 /* ---------- Types ---------- */
 
 export interface Strategy {
@@ -38,91 +30,102 @@ export interface UpdateStrategyPayload {
   isActive?: boolean;
 }
 
+/* Generic response for add/remove operations */
+export interface StrategySectionModifyResponse {
+  success?: boolean;
+  updated?: Strategy;
+  message?: string;
+  [key: string]: unknown;
+}
+
 /* ---------- CRUD ---------- */
 
 export const getStrategies = async (includeInactive = false): Promise<Strategy[]> => {
   const params = includeInactive ? { includeInactive: "true" } : undefined;
-  const data = await fetchApi<Strategy[]>({
+  return await fetchApi<Strategy[]>({
     url: "/strategies",
     method: "GET",
     params,
   });
-  return data;
 };
 
 export const getStrategy = async (id: string): Promise<Strategy> => {
   if (!id) throw new Error("Strategy id is required");
-  const data = await fetchApi<Strategy>({
+  return await fetchApi<Strategy>({
     url: `/strategies/${id}`,
     method: "GET",
   });
-  return data;
 };
 
-export const createStrategy = async (payload: CreateStrategyPayload): Promise<Strategy> => {
-  const data = await fetchApi<Strategy>({
+export const createStrategy = async (payload: CreateStrategyPayload): Promise<Strategy> =>
+  await fetchApi<Strategy>({
     url: "/strategies",
     method: "POST",
     data: payload,
   });
-  return data;
-};
 
-export const updateStrategy = async (id: string, payload: UpdateStrategyPayload): Promise<Strategy> => {
+export const updateStrategy = async (
+  id: string,
+  payload: UpdateStrategyPayload
+): Promise<Strategy> => {
   if (!id) throw new Error("Strategy id is required");
-  const data = await fetchApi<Strategy>({
+
+  return await fetchApi<Strategy>({
     url: `/strategies/${id}`,
     method: "PUT",
     data: payload,
   });
-  return data;
 };
 
-export const deleteStrategy = async (id: string): Promise<{ message?: string }> => {
+export const deleteStrategy = async (
+  id: string
+): Promise<{ message?: string }> => {
   if (!id) throw new Error("Strategy id is required");
-  const data = await fetchApi<{ message?: string }>({
+
+  return await fetchApi<{ message?: string }>({
     url: `/strategies/${id}`,
     method: "DELETE",
   });
-  return data;
 };
 
-/* ---------- Micro section endpoints (add/remove single item) ---------- */
+/* ---------- Micro section endpoints ---------- */
 
-/**
- * Add a single item to a section (entryCriteria | sltpCriteria | managementRules)
- * section must be one of: "entryCriteria" | "sltpCriteria" | "managementRules"
- */
-export const addSectionItem = async (strategyId: string, section: "entryCriteria" | "sltpCriteria" | "managementRules", item: string) => {
+export const addSectionItem = async (
+  strategyId: string,
+  section: "entryCriteria" | "sltpCriteria" | "managementRules",
+  item: string
+): Promise<StrategySectionModifyResponse> => {
   if (!strategyId) throw new Error("Strategy id is required");
   if (!section) throw new Error("Section is required");
   if (!item || !item.trim()) throw new Error("Item is required");
 
-  const data = await fetchApi<any>({
+  return await fetchApi<StrategySectionModifyResponse>({
     url: `/strategies/${strategyId}/sections/${section}/add`,
     method: "POST",
     data: { item },
   });
-  return data;
 };
 
 /**
- * Remove item at index from a section
- * index is number (0-based)
+ * Remove item at index
  */
-export const removeSectionItem = async (strategyId: string, section: "entryCriteria" | "sltpCriteria" | "managementRules", index: number) => {
+export const removeSectionItem = async (
+  strategyId: string,
+  section: "entryCriteria" | "sltpCriteria" | "managementRules",
+  index: number
+): Promise<StrategySectionModifyResponse> => {
   if (!strategyId) throw new Error("Strategy id is required");
   if (!section) throw new Error("Section is required");
-  if (typeof index !== "number" || isNaN(index) || index < 0) throw new Error("Valid index is required");
+  if (typeof index !== "number" || index < 0)
+    throw new Error("Valid index is required");
 
-  const data = await fetchApi<any>({
+  return await fetchApi<StrategySectionModifyResponse>({
     url: `/strategies/${strategyId}/sections/${section}/${index}`,
     method: "DELETE",
   });
-  return data;
 };
 
-/* ---------- Export default (optional) ---------- */
+/* ---------- Default export ---------- */
 
 const strategiesApi = {
   getStrategies,

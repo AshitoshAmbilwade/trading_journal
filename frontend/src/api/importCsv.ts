@@ -7,35 +7,36 @@ export const importCsvApi = {
     formData.append("file", file);
 
     return await fetchApi({
-      url: "/import/import-csv",
+      url: "import/import-csv",
       method: "POST",
       data: formData,
     });
   },
 
-  // New: uploadMultiple supports FileList or File[] and optional onProgress callback
+  // Upload multiple CSV files
   uploadMultiple: async (
     files: FileList | File[],
     onProgress?: (percent: number) => void
   ) => {
     const formData = new FormData();
-    // Multer route expects field name "files" (upload.array("files"))
     Array.from(files).forEach((f) => formData.append("files", f));
 
     return await fetchApi({
-      url: "/import/import-csv",
+      url: "import/import-csv",
       method: "POST",
       data: formData,
-      // axios-specific progress hook; fetchApi passes this through to axios
-      onUploadProgress: (progressEvent: any) => {
+
+      // No ANY — use browser's native ProgressEvent
+      onUploadProgress: (e: ProgressEvent) => {
         if (!onProgress) return;
         try {
-          const { loaded, total } = progressEvent;
-          if (total) {
+          const loaded = (e.loaded ?? 0);
+          const total = (e.total ?? 0);
+          if (total > 0) {
             const percent = Math.round((loaded * 100) / total);
             onProgress(percent);
           }
-        } catch (e) {
+        } catch {
           // ignore progress errors
         }
       },
