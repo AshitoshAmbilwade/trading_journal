@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { aiSummariesApi, AISummary } from "../../api/aiSummaries";
+import { AnyARecord } from "dns";
 
 export type GeneratePayload =
   | { type: "trade"; tradeId: string }
@@ -40,7 +41,7 @@ export function useGenerateAISummary() {
         };
       }
 
-      const res: unknown = await aiSummariesApi.generate(body as unknown);
+      const res: unknown = await aiSummariesApi.generate(body as any);
 
       if (!isObject(res)) {
         throw new Error("Empty response from AI service");

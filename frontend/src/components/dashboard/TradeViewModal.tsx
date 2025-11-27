@@ -218,28 +218,100 @@ const NumberDisplay = ({ value, className = "" }: { value: number | string; clas
 /**
  * Safe type-guards / extractor for API responses.
  * tradesApi.getById may return either a Trade or an object like { trade: Trade }.
- * This helper checks for common shapes and returns Trade | null.
+ * This helper detects common shapes and maps them to a fully-typed Trade.
  */
+
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object";
+
+/**
+ * Map a loose object (Record<string, unknown>) to our Trade type with safe defaults.
+ * This avoids unsafe direct casts and satisfies TypeScript.
+ */
+const mapToTrade = (o: Record<string, unknown>): Trade => {
+  // Helper getters with fallback
+  const getStr = (k: string, fallback = ""): string => {
+    const v = o[k];
+    if (typeof v === "string") return v;
+    if (typeof v === "number") return String(v);
+    return fallback;
+  };
+
+  const getNum = (k: string, fallback = 0): number | undefined => {
+    const v = o[k];
+    if (typeof v === "number") return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    }
+    return fallback;
+  };
+
+  // Build base trade object with fields we commonly use; spread remaining keys too
+  const base: any = {
+    _id: getStr("_id", getStr("id", "")),
+    symbol: getStr("symbol", ""),
+    type: getStr("type", ""),
+    quantity: getNum("quantity", 0),
+    entryPrice: getNum("entryPrice", undefined),
+    exitPrice: getNum("exitPrice", undefined),
+    tradeDate: getStr("tradeDate", getStr("date", "")),
+    entryDate: getStr("entryDate", ""),
+    exitDate: getStr("exitDate", ""),
+    brokerage: getNum("brokerage", 0),
+    pnl: getNum("pnl", 0),
+    broker: getStr("broker", ""),
+    strategy: getStr("strategy", ""),
+    session: getStr("session", ""),
+    segment: getStr("segment", ""),
+    tradeType: getStr("tradeType", ""),
+    direction: getStr("direction", ""),
+    chartTimeframe: getStr("chartTimeframe", ""),
+    entryCondition: getStr("entryCondition", ""),
+    exitCondition: getStr("exitCondition", ""),
+    source: getStr("source", "manual"),
+    image: (o["image"] as any) ?? (o["images"] as any) ?? "",
+    entryNote: getStr("entryNote", ""),
+    exitNote: getStr("exitNote", ""),
+    remark: getStr("remark", ""),
+    notes: getStr("notes", ""),
+    aiAnalysis: (o["aiAnalysis"] as any) ?? undefined,
+    // spread other keys (preserve data)
+    ...o,
+  };
+
+  // Ensure required-typed fields exist; TS will accept this as Trade
+  return base as Trade;
+};
 
 const extractTradeFromResponse = (res: unknown): Trade | null => {
   if (!isRecord(res)) return null;
 
-  // If top-level looks like a Trade (has _id or id)
-  if ("_id" in res || "id" in res) {
-    return res as Trade;
+  // If top-level looks like a Trade (has _id or id or symbol), map it
+  if ("_id" in res || "id" in res || "symbol" in res) {
+    return mapToTrade(res);
   }
 
   // If wrapped in { trade: ... }
   if ("trade" in res && isRecord((res as Record<string, unknown>).trade)) {
-    return ((res as Record<string, unknown>).trade as unknown) as Trade;
+    return mapToTrade((res as Record<string, unknown>).trade as Record<string, unknown>);
   }
 
-  // safe fallback: maybe the response has a `data` property with trade
+  // If wrapped in { data: { trade|_id|id } }
   if ("data" in res && isRecord((res as Record<string, unknown>).data)) {
-    const d = (res as Record<string, unknown>).data;
-    if ("_id" in d || "id" in d) return (d as unknown) as Trade;
-    if ("trade" in d && isRecord(d.trade)) return (d.trade as unknown) as Trade;
+    const d = (res as Record<string, unknown>).data as Record<string, unknown>;
+    if ("trade" in d && isRecord(d.trade)) return mapToTrade(d.trade as Record<string, unknown>);
+    if ("_id" in d || "id" in d || "symbol" in d) return mapToTrade(d);
+  }
+
+  // Last-resort: search for nested object that looks like a trade (shallow scan)
+  for (const key of Object.keys(res)) {
+    const v = (res as Record<string, unknown>)[key];
+    if (isRecord(v)) {
+      if ("_id" in v || "id" in v || "symbol" in v) return mapToTrade(v);
+      if ("trade" in v && isRecord((v as Record<string, unknown>).trade)) {
+        return mapToTrade((v as Record<string, unknown>).trade as Record<string, unknown>);
+      }
+    }
   }
 
   return null;

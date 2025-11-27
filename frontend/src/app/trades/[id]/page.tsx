@@ -1,23 +1,23 @@
 // src/app/trades/[id]/page.tsx
+"use client";
+
 import React from "react";
+import { useParams } from "next/navigation";
 import TradeViewPage from "@/components/dashboard/TradeViewModal";
 
 /**
- * Next.js App Router passes `params` as a plain object (not a Promise) at runtime.
- * Keep the prop typing simple and compatible with Next's generated PageProps.
+ * Client wrapper for /trades/[id]
  *
- * We declare the incoming prop shape inline in the function signature to avoid
- * mismatches with Next's internal PageProps utility types.
+ * Reason:
+ * - Server-side typing for PageProps in your Next version is causing a type-constraint failure during build.
+ * - Making this a client component and using useParams() avoids the generated PageProps type entirely,
+ *   while keeping runtime behavior identical: TradeViewPage still receives the tradeId.
+ *
+ * No changes to TradeViewPage are required.
  */
+export default function PageClient() {
+  const params = useParams() as { id?: string } | null;
+  const id = params?.id ?? "";
 
-type Props = {
-  params: { id: string };
-};
-
-export default function Page({ params }: Props) {
-  const id = params?.id ?? null;
-
-  // TradeViewPage likely is a client component and accepts tradeId prop.
-  // We simply forward the id (or null) — no logic change.
   return <TradeViewPage tradeId={id} />;
 }

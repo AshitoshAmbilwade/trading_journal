@@ -1,3 +1,4 @@
+// src/components/analytics/AnalyticsShell.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -73,6 +74,29 @@ const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v =
 const toNumber = (v: unknown) => {
   const n = Number(v as unknown);
   return Number.isFinite(n) ? n : 0;
+};
+
+/** Parse a backend-provided "trend" into the KPICard-expected union */
+const parseTrend = (v: unknown): "up" | "down" | undefined => {
+  if (v === undefined || v === null) return undefined;
+
+  // string-based signals
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "up" || s === "positive" || s === "increase" || s === "1") return "up";
+    if (s === "down" || s === "negative" || s === "decrease" || s === "-1") return "down";
+    // sometimes backend might send "UP" / "DOWN"
+    if (s === "u" || s === "d") return s === "u" ? "up" : "down";
+  }
+
+  // numeric signals: positive => up, negative => down, zero/NaN => undefined
+  const n = Number(v as unknown);
+  if (!Number.isNaN(n)) {
+    if (n > 0) return "up";
+    if (n < 0) return "down";
+  }
+
+  return undefined;
 };
 
 export default function AnalyticsShell() {
@@ -224,6 +248,12 @@ export default function AnalyticsShell() {
     return { from: range.from, to: range.to };
   }, [interval, customRange]);
 
+  // Narrow and parse trend values so they match KPICard's expected type
+  const totalPnlTrend = parseTrend(summary?.totalPnlTrend);
+  const winRateTrend = parseTrend(summary?.winRateTrend);
+  const avgPnlTrend = parseTrend(summary?.avgPnlTrend);
+  const tradesTrend = parseTrend(summary?.tradesTrend);
+
   return (
     <div className="min-h-screen bg-background/50 p-6 space-y-8">
       {/* HEADER SECTION */}
@@ -272,7 +302,7 @@ export default function AnalyticsShell() {
           gradient="from-green-500 to-emerald-600"
           prefix="₹"
           loading={loading}
-          trend={summary?.totalPnlTrend}
+          trend={totalPnlTrend}
         />
         <KPICard
           title="Win Rate"
@@ -281,7 +311,7 @@ export default function AnalyticsShell() {
           gradient="from-blue-500 to-cyan-600"
           suffix="%"
           loading={loading}
-          trend={summary?.winRateTrend}
+          trend={winRateTrend}
         />
         <KPICard
           title="Avg P/L"
@@ -290,7 +320,7 @@ export default function AnalyticsShell() {
           gradient="from-purple-500 to-pink-600"
           prefix="₹"
           loading={loading}
-          trend={summary?.avgPnlTrend}
+          trend={avgPnlTrend}
         />
         <KPICard
           title="Total Trades"
@@ -298,7 +328,7 @@ export default function AnalyticsShell() {
           icon={Target}
           gradient="from-orange-500 to-amber-600"
           loading={loading}
-          trend={summary?.tradesTrend}
+          trend={tradesTrend}
         />
       </div>
 

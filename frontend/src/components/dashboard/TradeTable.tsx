@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { tradesApi, Trade } from "../../api/trades";
+import { tradesApi, Trade as ApiTrade } from "../../api/trades";
 import strategiesApi, { Strategy } from "@/api/strategies";
 import {
   Search,
@@ -52,25 +52,13 @@ import {
 
 /* ---------------- Helpers ---------------- */
 
-/**
- * Cast helper: use this to convert unknown -> typed shape where necessary.
- * This avoids using `any` while keeping runtime behavior identical.
- */
-function asRecord<T = Record<string, unknown>>(v: unknown): T {
-  return v as unknown as T;
-}
-
-function extractImageString(img: unknown): string {
+function extractImageString(img: any): string {
   if (!img) return "";
   if (typeof img === "string") return img;
   if (typeof File !== "undefined" && img instanceof File) return "";
-  if (typeof img === "object" && img !== null) {
-    const rec = asRecord(img);
+  if (typeof img === "object") {
     const keys = ["path", "secure_url", "url", "location", "filename", "public_id"];
-    for (const k of keys) {
-      const val = rec[k as keyof typeof rec];
-      if (val) return String(val);
-    }
+    for (const k of keys) if ((img as any)[k]) return String((img as any)[k]);
   }
   return "";
 }
@@ -105,7 +93,7 @@ const calculatePnL = (
  *
  * Returns 'YYYY-MM-DD' or empty string.
  */
-const getDateOnly = (val?: unknown): string => {
+const getDateOnly = (val?: any): string => {
   if (val === undefined || val === null) return "";
   try {
     // numeric timestamp
@@ -124,6 +112,7 @@ const getDateOnly = (val?: unknown): string => {
     // If already has YYYY-MM-DD anywhere, return first match
     const isoMatch = s.match(/(\d{4}-\d{2}-\d{2})/);
     if (isoMatch) {
+      // But ensure we pick correct semantics: if string contains timezone info, the YYYY-MM-DD may be part of ISO; okay to return
       return isoMatch[1];
     }
 
@@ -135,11 +124,13 @@ const getDateOnly = (val?: unknown): string => {
     const hasTZ = /Z$|[+\-]\d{2}:?\d{2}$/.test(s) || /T.*[+\-]\d{2}:?\d{2}/.test(s);
 
     if (hasTZ) {
+      // use UTC components (string had explicit timezone)
       const yyyy = d.getUTCFullYear();
       const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
       const dd = String(d.getUTCDate()).padStart(2, "0");
       return `${yyyy}-${mm}-${dd}`;
     } else {
+      // no timezone present -> use local date components (user likely entered local date)
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, "0");
       const dd = String(d.getDate()).padStart(2, "0");
@@ -151,7 +142,7 @@ const getDateOnly = (val?: unknown): string => {
 };
 
 // Export CSV: force Excel to treat dates as text cells to avoid #### and ensure calendar date shown
-const exportCsvFromTrades = (trades: Trade[]) => {
+const exportCsvFromTrades = (trades: ApiTrade[]) => {
   const headers = [
     "Symbol", "Type", "Quantity", "Entry Price", "Exit Price", "P/L", "Brokerage",
     "Trade Date", "Entry Date", "Exit Date", "Broker", "Strategy",
@@ -161,19 +152,13 @@ const exportCsvFromTrades = (trades: Trade[]) => {
   ].join(',');
 
   const data = trades.map(trade => {
-    const tradeDateStr = getDateOnly((trade as unknown as Record<string, unknown>).tradeDate);
-    const entryDateStr = getDateOnly((trade as unknown as Record<string, unknown>).entryDate);
-    const exitDateStr = getDateOnly((trade as unknown as Record<string, unknown>).exitDate);
+    const tradeDateStr = getDateOnly(trade.tradeDate);
+    const entryDateStr = getDateOnly(trade.entryDate);
+    const exitDateStr = getDateOnly(trade.exitDate);
 
     const tradeDateCell = tradeDateStr ? `="${tradeDateStr}"` : '';
     const entryDateCell = entryDateStr ? `="${entryDateStr}"` : '';
     const exitDateCell = exitDateStr ? `="${exitDateStr}"` : '';
-
-    const pnlVal = (trade as unknown as Record<string, unknown>)['pnl'];
-    const entryNote = String((trade as unknown as Record<string, unknown>)['entryNote'] ?? "");
-    const exitNote = String((trade as unknown as Record<string, unknown>)['exitNote'] ?? "");
-    const remark = String((trade as unknown as Record<string, unknown>)['remark'] ?? "");
-    const notes = String((trade as unknown as Record<string, unknown>)['notes'] ?? "");
 
     return [
       trade.symbol ?? '',
@@ -181,7 +166,7 @@ const exportCsvFromTrades = (trades: Trade[]) => {
       trade.quantity ?? '',
       trade.entryPrice ?? '',
       trade.exitPrice ?? '',
-      pnlVal ?? '',
+      (trade as any).pnl ?? '',
       trade.brokerage ?? '',
       tradeDateCell,
       entryDateCell,
@@ -196,10 +181,10 @@ const exportCsvFromTrades = (trades: Trade[]) => {
       trade.entryCondition ?? '',
       trade.exitCondition ?? '',
       trade.source ?? '',
-      `"${entryNote.replace(/"/g, '""')}"`,
-      `"${exitNote.replace(/"/g, '""')}"`,
-      `"${remark.replace(/"/g, '""')}"`,
-      `"${notes.replace(/"/g, '""')}"`
+      `"${(trade.entryNote || '').replace(/"/g, '""')}"`,
+      `"${(trade.exitNote || '').replace(/"/g, '""')}"`,
+      `"${(trade.remark || '').replace(/"/g, '""')}"`,
+      `"${(trade.notes || '').replace(/"/g, '""')}"` 
     ].join(',');
   });
 
@@ -213,7 +198,7 @@ const exportCsvFromTrades = (trades: Trade[]) => {
   URL.revokeObjectURL(url);
 };
 
-const exportJsonFromTrades = (trades: Trade[]) => {
+const exportJsonFromTrades = (trades: ApiTrade[]) => {
   const data = JSON.stringify(trades, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -228,8 +213,17 @@ const exportJsonFromTrades = (trades: Trade[]) => {
 import HeaderStats from './HeaderStats';
 import ExportDropdown from './ExportDropdown';
 import SearchAndFiltersBar from './SearchAndFiltersBar';
-import AdvancedFiltersPanel from './AdvancedFiltersPanel';
-import TradesTableBody from './TradesTableBody';
+/**
+ * IMPORTANT: import the Filters type from AdvancedFiltersPanel.
+ * AdvancedFiltersPanel must export a `Filters` type:
+ * export type Filters = { ... }
+ */
+import AdvancedFiltersPanel, { type Filters } from './AdvancedFiltersPanel';
+/**
+ * IMPORT TradesTableBody's Trade type as BodyTrade and the component.
+ * We'll map our ApiTrade -> BodyTrade before passing props.
+ */
+import TradesTableBody, { type Trade as BodyTrade } from './TradesTableBody';
 import ExportCustomModal from './ExportCustomModal';
 
 /* ---------------- Component ---------------- */
@@ -237,12 +231,12 @@ import ExportCustomModal from './ExportCustomModal';
 export function TradeTable() {
   const router = useRouter();
 
-  const [trades, setTrades] = useState<Trade[]>([]);
+  const [trades, setTrades] = useState<ApiTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+  const [editingTrade, setEditingTrade] = useState<ApiTrade | null>(null);
   const [imageUrl, setImageUrl] = useState<string>("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -252,8 +246,8 @@ export function TradeTable() {
   const [exportStart, setExportStart] = useState<string>("");
   const [exportEnd, setExportEnd] = useState<string>("");
 
-  // Enhanced filter states
-  const [filters, setFilters] = useState({
+  // ----- IMPORTANT: explicit initialFilters and typed state -----
+  const initialFilters: Filters = {
     symbol: "",
     type: "all",
     quantityMin: "",
@@ -281,7 +275,10 @@ export function TradeTable() {
     exitCondition: "all",
     source: "all",
     status: "all",
-  });
+  };
+
+  // Enhanced filter states (explicitly typed to Filters)
+  const [filters, setFilters] = useState<Filters>(initialFilters);
 
   // Strategies state
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -291,7 +288,7 @@ export function TradeTable() {
   const todayDateStr = (() => new Date().toISOString().split("T")[0])();
 
   // Default new trade state
-  const defaultNewTrade: Partial<Trade> = {
+  const defaultNewTrade: Partial<ApiTrade> = {
     symbol: "",
     type: "Buy",
     quantity: 0,
@@ -306,7 +303,7 @@ export function TradeTable() {
     strategy: "",
   };
 
-  const [newTrade, setNewTrade] = useState<Partial<Trade>>(defaultNewTrade);
+  const [newTrade, setNewTrade] = useState<Partial<ApiTrade>>(defaultNewTrade);
 
   const strategyInputRef = useRef<HTMLInputElement | null>(null);
   const tradeDateRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -324,7 +321,6 @@ export function TradeTable() {
   useEffect(() => {
     loadTrades();
     loadStrategies();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadStrategies = async () => {
@@ -344,20 +340,16 @@ export function TradeTable() {
     try {
       setLoading(true);
       const data = await tradesApi.getAll();
-      // normalize response: allow array or { trades: [] }
-      const loaded = Array.isArray(data)
-        ? data
-        : (asRecord<{ trades?: unknown }>(data).trades ?? []);
-      const normalized: Trade[] = (loaded as unknown[]).map((t) => {
-        const rec = asRecord<Record<string, unknown>>(t);
-        return {
-          ...(rec as unknown as Trade),
-          tradeDate: (rec.tradeDate as string) ?? new Date().toISOString(),
-          entryDate: (rec.entryDate as string) ?? undefined,
-          exitDate: (rec.exitDate as string) ?? undefined,
-          image: rec.image ?? (Array.isArray(rec.images) ? (rec.images as unknown[])[0] : ""),
-        } as Trade;
-      });
+      const loaded = Array.isArray(data) ? data : (data && (data as any).trades) || [];
+      // Preserve backend's stored values but ensure we have something valid
+      const normalized: ApiTrade[] = loaded.map((t: any) => ({
+        ...t,
+        // keep whatever backend returned (ISO string, date-only string, timestamp) — we'll normalize on export/filter/etc
+        tradeDate: t.tradeDate ?? new Date().toISOString(),
+        entryDate: t.entryDate ?? undefined,
+        exitDate: t.exitDate ?? undefined,
+        image: t.image ?? (Array.isArray(t.images) ? t.images[0] : ""),
+      }));
       setTrades(normalized);
     } catch (err) {
       console.error("[TradeTable] load error:", err);
@@ -366,6 +358,20 @@ export function TradeTable() {
       setLoading(false);
     }
   };
+
+  // ----------------- New: mapping helpers between ApiTrade and BodyTrade -----------------
+  const mapApiTradeToBodyTrade = (t: ApiTrade): BodyTrade => {
+    // Ensure required fields that BodyTrade expects exist with sensible defaults
+    return {
+      // spread everything but ensure _id & source are strings
+      ...((t as unknown) as BodyTrade),
+      _id: (t._id ?? "") as string,
+      source: (t.source ?? "manual") as string,
+    } as BodyTrade;
+  };
+
+  // If TradesTableBody needs an object with stricter shape, ensure each mapped trade has required fields.
+  // We will map filteredTrades when passing to the component below.
 
   // Image handling
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -386,14 +392,42 @@ export function TradeTable() {
     setImageUrl("");
   };
 
-  // Trade operations
+  // Trade operations (keep using ApiTrade shape internally)
   const resetForm = useCallback(() => {
     setNewTrade(defaultNewTrade);
     setEditingTrade(null);
     setImageUrl("");
-    // defaultNewTrade intentionally in deps? we keep original behavior
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [defaultNewTrade]);
+
+  // NOTE: rename to indicate this handles ApiTrade editing UI
+  const handleEditTradeApi = (trade: ApiTrade) => {
+    const img = extractImageString(trade.image ?? (trade as any).images?.[0] ?? "");
+    setEditingTrade(trade);
+
+    // For date inputs, use YYYY-MM-DD that matches original calendar day
+    const getDateStr = (v?: any) => v ? getDateOnly(v) : todayDateStr;
+
+    setNewTrade({
+      ...trade,
+      image: img,
+      tradeDate: getDateStr(trade.tradeDate as any),
+      entryDate: trade.entryDate ? getDateStr(trade.entryDate as any) : todayDateStr,
+      exitDate: trade.exitDate ? getDateStr(trade.exitDate as any) : todayDateStr,
+      strategy: trade.strategy ?? "",
+    });
+    setImageUrl(img);
+    setModalOpen(true);
+  };
+
+  // Wrapper that the TradesTableBody will call (BodyTrade -> ApiTrade)
+  const handleEditTradeFromBody = (t: BodyTrade) => {
+    const apiTrade: ApiTrade = {
+      ...(t as unknown as ApiTrade),
+      _id: t._id,
+      source: (t as any).source ?? "manual",
+    };
+    handleEditTradeApi(apiTrade);
+  };
 
   const handleSaveTrade = async () => {
     if (saving) return;
@@ -407,10 +441,10 @@ export function TradeTable() {
       }
 
       // IMPORTANT: create UTC midnight for the selected date to avoid timezone shift
-      const toIsoFromDateStr = (d?: unknown) =>
+      const toIsoFromDateStr = (d?: any) =>
         d ? new Date(`${String(d).split("T")[0]}T00:00:00Z`).toISOString() : undefined;
 
-      const payload: Partial<Trade> = {
+      const payload: Partial<ApiTrade> = {
         ...newTrade,
         quantity: Number(newTrade.quantity),
         entryPrice: Number(newTrade.entryPrice),
@@ -421,9 +455,7 @@ export function TradeTable() {
         exitDate: toIsoFromDateStr(newTrade.exitDate),
       };
 
-      // remove pnl if accidentally present
-      const plRec = asRecord(payload);
-      delete plRec['pnl'];
+      delete (payload as any).pnl;
 
       if (payload.image && typeof payload.image === "object" && !(payload.image instanceof File)) {
         payload.image = extractImageString(payload.image);
@@ -436,40 +468,20 @@ export function TradeTable() {
       });
 
       if (editingTrade) {
-        await tradesApi.update(editingTrade._id!, payload as Trade);
+        await tradesApi.update(editingTrade._id!, payload as ApiTrade);
       } else {
-        await tradesApi.create(payload as Trade);
+        await tradesApi.create(payload as ApiTrade);
       }
 
       setModalOpen(false);
       resetForm();
       await loadTrades();
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error("[TradeTable] Save failed:", err);
-      // attempt to safely extract message
-      const msg = (err instanceof Error && err.message) ? err.message : "Failed to save trade.";
-      alert(msg);
+      alert(err?.message || "Failed to save trade.");
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleEditTrade = (trade: Trade) => {
-    const img = extractImageString((trade as unknown as Record<string, unknown>).image ?? (trade as unknown as Record<string, unknown>).images?.[0] ?? "");
-    setEditingTrade(trade);
-
-    const getDateStr = (v?: unknown) => v ? getDateOnly(v) : todayDateStr;
-
-    setNewTrade({
-      ...trade,
-      image: img,
-      tradeDate: getDateStr((trade as unknown as Record<string, unknown>).tradeDate),
-      entryDate: (trade as unknown as Record<string, unknown>).entryDate ? getDateStr((trade as unknown as Record<string, unknown>).entryDate) : todayDateStr,
-      exitDate: (trade as unknown as Record<string, unknown>).exitDate ? getDateStr((trade as unknown as Record<string, unknown>).exitDate) : todayDateStr,
-      strategy: trade.strategy ?? "",
-    });
-    setImageUrl(img);
-    setModalOpen(true);
   };
 
   const handleDeleteTrade = async (id: string) => {
@@ -483,27 +495,31 @@ export function TradeTable() {
     }
   };
 
+  // Wrapper for delete when TradesTableBody passes a BodyTrade
+  const handleDeleteFromBody = (t: BodyTrade) => {
+    if (!t._id) return;
+    handleDeleteTrade(t._id);
+  };
+
   // Filtering and export
-  const computeFilteredTrades = useCallback((): Trade[] => {
+  const computeFilteredTrades = useCallback((): ApiTrade[] => {
     return trades.filter((trade) => {
       const s = searchTerm.toLowerCase();
-      const rec = asRecord<Record<string, unknown>>(trade);
-
       const matchesSearch = searchTerm === "" ||
-        String((rec.symbol ?? "")).toLowerCase().includes(s) ||
-        String((rec.broker ?? "")).toLowerCase().includes(s) ||
-        String((rec.strategy ?? "")).toLowerCase().includes(s) ||
-        String((rec.segment ?? "")).toLowerCase().includes(s) ||
-        String((rec.tradeType ?? "")).toLowerCase().includes(s) ||
-        String((rec.direction ?? "")).toLowerCase().includes(s) ||
-        String((rec.entryCondition ?? "")).toLowerCase().includes(s) ||
-        String((rec.exitCondition ?? "")).toLowerCase().includes(s) ||
-        String((rec.entryNote ?? "")).toLowerCase().includes(s) ||
-        String((rec.exitNote ?? "")).toLowerCase().includes(s) ||
-        String((rec.remark ?? "")).toLowerCase().includes(s) ||
-        String((rec.notes ?? "")).toLowerCase().includes(s);
+        (trade.symbol || "").toLowerCase().includes(s) ||
+        (trade.broker || "").toLowerCase().includes(s) ||
+        (trade.strategy || "").toLowerCase().includes(s) ||
+        (trade.segment || "").toLowerCase().includes(s) ||
+        (trade.tradeType || "").toLowerCase().includes(s) ||
+        (trade.direction || "").toLowerCase().includes(s) ||
+        (trade.entryCondition || "").toLowerCase().includes(s) ||
+        (trade.exitCondition || "").toLowerCase().includes(s) ||
+        (trade.entryNote || "").toLowerCase().includes(s) ||
+        (trade.exitNote || "").toLowerCase().includes(s) ||
+        (trade.remark || "").toLowerCase().includes(s) ||
+        (trade.notes || "").toLowerCase().includes(s);
 
-      const matchesSymbol = !filters.symbol || String(rec.symbol ?? "").toLowerCase().includes(filters.symbol.toLowerCase());
+      const matchesSymbol = !filters.symbol || (trade.symbol || "").toLowerCase().includes(filters.symbol.toLowerCase());
       const matchesType = filters.type === "all" || trade.type === filters.type;
       const matchesQuantity = (!filters.quantityMin || Number(trade.quantity) >= Number(filters.quantityMin)) &&
         (!filters.quantityMax || Number(trade.quantity) <= Number(filters.quantityMax));
@@ -511,35 +527,32 @@ export function TradeTable() {
         (!filters.entryPriceMax || Number(trade.entryPrice) <= Number(filters.entryPriceMax));
       const matchesExitPrice = (!filters.exitPriceMin || (trade.exitPrice && Number(trade.exitPrice) >= Number(filters.exitPriceMin))) &&
         (!filters.exitPriceMax || (trade.exitPrice && Number(trade.exitPrice) <= Number(filters.exitPriceMax)));
-
-      const pnlVal = Number(rec['pnl'] ?? 0);
-      const matchesPnl = (!filters.pnlMin || pnlVal >= Number(filters.pnlMin)) &&
-        (!filters.pnlMax || pnlVal <= Number(filters.pnlMax));
-
-      const matchesBroker = !filters.broker || String(rec.broker ?? "").toLowerCase().includes(filters.broker.toLowerCase());
-      const matchesStrategy = !filters.strategy || String(rec.strategy ?? "").toLowerCase().includes(filters.strategy.toLowerCase());
+      const matchesPnl = (!filters.pnlMin || Number((trade as any).pnl) >= Number(filters.pnlMin)) &&
+        (!filters.pnlMax || Number((trade as any).pnl) <= Number(filters.pnlMax));
+      const matchesBroker = !filters.broker || (trade.broker || "").toLowerCase().includes(filters.broker.toLowerCase());
+      const matchesStrategy = !filters.strategy || (trade.strategy || "").toLowerCase().includes(filters.strategy.toLowerCase());
       const matchesSession = filters.session === "all" || trade.session === filters.session;
       const matchesSegment = filters.segment === "all" || trade.segment === filters.segment;
       const matchesTradeType = filters.tradeType === "all" || trade.tradeType === filters.tradeType;
       const matchesDirection = filters.direction === "all" || trade.direction === filters.direction;
-      const matchesChartTimeframe = !filters.chartTimeframe || String(rec.chartTimeframe ?? "").toLowerCase().includes(filters.chartTimeframe.toLowerCase());
+      const matchesChartTimeframe = !filters.chartTimeframe || (trade.chartTimeframe || "").toLowerCase().includes(filters.chartTimeframe.toLowerCase());
       const matchesEntryCondition = filters.entryCondition === "all" || trade.entryCondition === filters.entryCondition;
       const matchesExitCondition = filters.exitCondition === "all" || trade.exitCondition === filters.exitCondition;
       const matchesSource = filters.source === "all" || trade.source === filters.source;
 
       // Normalize trade date to midnight UTC for consistent comparisons
-      const tradeDateIso = getDateOnly(rec.tradeDate);
+      const tradeDateIso = getDateOnly(trade.tradeDate);
       const tradeDate = tradeDateIso ? new Date(tradeDateIso + "T00:00:00Z") : null;
 
       const matchesTradeDate = (!filters.tradeDateFrom || (tradeDate && tradeDate >= new Date(filters.tradeDateFrom + "T00:00:00Z"))) &&
         (!filters.tradeDateTo || (tradeDate && tradeDate <= new Date(filters.tradeDateTo + "T23:59:59Z")));
 
-      const entryDateIso = rec.entryDate ? getDateOnly(rec.entryDate) : "";
+      const entryDateIso = trade.entryDate ? getDateOnly(trade.entryDate) : "";
       const entryDate = entryDateIso ? new Date(entryDateIso + "T00:00:00Z") : null;
       const matchesEntryDate = (!filters.entryDateFrom || (entryDate && entryDate >= new Date(filters.entryDateFrom + "T00:00:00Z"))) &&
         (!filters.entryDateTo || (entryDate && entryDate <= new Date(filters.entryDateTo + "T23:59:59Z")));
 
-      const exitDateIso = rec.exitDate ? getDateOnly(rec.exitDate) : "";
+      const exitDateIso = trade.exitDate ? getDateOnly(trade.exitDate) : "";
       const exitDate = exitDateIso ? new Date(exitDateIso + "T00:00:00Z") : null;
       const matchesExitDate = (!filters.exitDateFrom || (exitDate && exitDate >= new Date(filters.exitDateFrom + "T00:00:00Z"))) &&
         (!filters.exitDateTo || (exitDate && exitDate <= new Date(filters.exitDateTo + "T23:59:59Z")));
@@ -570,7 +583,7 @@ export function TradeTable() {
         const sIso = getDateOnly(s.toISOString()) + "T00:00:00Z";
         const eIso = getDateOnly(today.toISOString()) + "T23:59:59Z";
         toExport = base.filter(t => {
-          const td = new Date(getDateOnly((t as unknown as Record<string, unknown>).tradeDate) + "T00:00:00Z");
+          const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
           return td >= new Date(sIso) && td <= new Date(eIso);
         });
       } else if (range === 'last30') {
@@ -579,7 +592,7 @@ export function TradeTable() {
         const sIso = getDateOnly(s.toISOString()) + "T00:00:00Z";
         const eIso = getDateOnly(today.toISOString()) + "T23:59:59Z";
         toExport = base.filter(t => {
-          const td = new Date(getDateOnly((t as unknown as Record<string, unknown>).tradeDate) + "T00:00:00Z");
+          const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
           return td >= new Date(sIso) && td <= new Date(eIso);
         });
       } else if (range === 'custom') {
@@ -611,7 +624,7 @@ export function TradeTable() {
     }
     const base = computeFilteredTrades();
     const toExport = base.filter(t => {
-      const td = new Date(getDateOnly((t as unknown as Record<string, unknown>).tradeDate) + "T00:00:00Z");
+      const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
       return td >= s && td <= e;
     });
 
@@ -635,36 +648,11 @@ export function TradeTable() {
 
   const filteredTrades = computeFilteredTrades();
 
+  // map filtered trades to BodyTrade shape before giving to TradesTableBody
+  const mappedFilteredTrades: BodyTrade[] = filteredTrades.map(mapApiTradeToBodyTrade);
+
   const clearFilters = () => {
-    setFilters({
-      symbol: "",
-      type: "all",
-      quantityMin: "",
-      quantityMax: "",
-      entryPriceMin: "",
-      entryPriceMax: "",
-      exitPriceMin: "",
-      exitPriceMax: "",
-      pnlMin: "",
-      pnlMax: "",
-      tradeDateFrom: "",
-      tradeDateTo: "",
-      entryDateFrom: "",
-      entryDateTo: "",
-      exitDateFrom: "",
-      exitDateTo: "",
-      broker: "",
-      strategy: "",
-      session: "all",
-      segment: "all",
-      tradeType: "all",
-      direction: "all",
-      chartTimeframe: "",
-      entryCondition: "all",
-      exitCondition: "all",
-      source: "all",
-      status: "all",
-    });
+    setFilters(initialFilters);
     setSearchTerm("");
   };
 
@@ -688,9 +676,9 @@ export function TradeTable() {
     val !== "" && val !== "all"
   ).length;
 
-  // Stats calculation
-  const totalPnL = filteredTrades.reduce((sum, trade) => sum + Number(asRecord(trade)['pnl'] ?? 0), 0);
-  const winningTrades = filteredTrades.filter(trade => Number(asRecord(trade)['pnl'] ?? 0) > 0).length;
+  // Stats calculation (use ApiTrade filtered list)
+  const totalPnL = filteredTrades.reduce((sum, trade) => sum + Number((trade as any).pnl || 0), 0);
+  const winningTrades = filteredTrades.filter(trade => Number((trade as any).pnl || 0) > 0).length;
   const winRate = filteredTrades.length > 0 ? (winningTrades / filteredTrades.length) * 100 : 0;
 
   return (
@@ -764,11 +752,11 @@ export function TradeTable() {
                         <label className="text-sm font-medium text-gray-300">{f.label}</label>
                         <Input
                           type={f.type}
-                          value={(newTrade as unknown as Record<string, unknown>)[f.key] ?? ""}
+                          value={(newTrade as any)[f.key] ?? ""}
                           onChange={(e) =>
                             setNewTrade((p) => ({
                               ...p,
-                              [f.key]: f.type === "number" ? Number(e.target.value) : e.target.value,
+                              [f.key]: f.type === "number" ? Number((e.target as HTMLInputElement).value) : (e.target as HTMLInputElement).value,
                             }))
                           }
                           placeholder={f.placeholder}
@@ -790,9 +778,9 @@ export function TradeTable() {
                         <div className="flex gap-2">
                           <Input
                             type="date"
-                            value={(newTrade as unknown as Record<string, unknown>)[f.key] ?? ""}
+                            value={(newTrade as any)[f.key] ?? ""}
                             onChange={(e) =>
-                              setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                              setNewTrade((p) => ({ ...p, [f.key]: (e.target as HTMLInputElement).value }))
                             }
                             className="bg-gray-800 border-gray-600 text-white flex-1"
                           />
@@ -802,7 +790,7 @@ export function TradeTable() {
                             size="icon"
                             className="border-gray-600 hover:bg-gray-700"
                             onClick={() => {
-                              const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${(newTrade as unknown as Record<string, unknown>)[f.key] ?? ''}"]`);
+                              const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${(newTrade as any)[f.key] ?? ''}"]`);
                               el?.showPicker?.();
                             }}
                           >
@@ -822,7 +810,7 @@ export function TradeTable() {
                           ref={strategyInputRef}
                           list="strategies-list"
                           value={newTrade.strategy || ""}
-                          onChange={(e) => onStrategyInputChange(e.target.value)}
+                          onChange={(e) => onStrategyInputChange((e.target as HTMLInputElement).value)}
                           placeholder="Type or select strategy..."
                           className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
                         />
@@ -868,9 +856,9 @@ export function TradeTable() {
                         <label className="text-sm font-medium text-gray-300">{f.label}</label>
                         <select
                           className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
-                          value={(newTrade as unknown as Record<string, unknown>)[f.key] || ""}
+                          value={(newTrade as any)[f.key] || ""}
                           onChange={(e) =>
-                            setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                            setNewTrade((p) => ({ ...p, [f.key]: (e.target as HTMLSelectElement).value }))
                           }
                         >
                           <option value="">Select {f.label}</option>
@@ -896,9 +884,9 @@ export function TradeTable() {
                           <label className="text-sm font-medium text-gray-300">{f.label}</label>
                           <Input
                             placeholder={f.placeholder}
-                            value={(newTrade as unknown as Record<string, unknown>)[f.key] || ""}
+                            value={(newTrade as any)[f.key] || ""}
                             onChange={(e) =>
-                              setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
+                              setNewTrade((p) => ({ ...p, [f.key]: (e.target as HTMLInputElement).value }))
                             }
                             className="bg-gray-800 border-gray-600 text-white"
                           />
@@ -911,7 +899,7 @@ export function TradeTable() {
                         placeholder="Any additional comments or observations..."
                         value={newTrade.notes || ""}
                         onChange={(e) =>
-                          setNewTrade((p) => ({ ...p, notes: e.target.value }))
+                          setNewTrade((p) => ({ ...p, notes: (e.target as HTMLInputElement).value }))
                         }
                         className="bg-gray-800 border-gray-600 text-white"
                       />
@@ -1040,10 +1028,10 @@ export function TradeTable() {
               <TableBody>
                 <TradesTableBody
                   loading={loading}
-                  filteredTrades={filteredTrades}
+                  filteredTrades={mappedFilteredTrades}
                   formatDate={formatDate}
                   formatCurrency={formatCurrency}
-                  handleEditTrade={handleEditTrade}
+                  handleEditTrade={handleEditTradeFromBody}
                   handleDeleteTrade={handleDeleteTrade}
                   routerPush={(p: string) => router.push(p)}
                 />
