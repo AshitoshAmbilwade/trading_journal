@@ -3,17 +3,28 @@ import React from "react";
 import TradeViewPage from "@/components/dashboard/TradeViewModal";
 
 /**
- * NOTE:
- * We intentionally type the incoming props as `any` here to avoid
- * colliding with Next.js' generated PageProps type for app routes.
- * The runtime behavior is unchanged: we still `await params` (Next
- * sometimes provides a Promise) and extract `id`.
+ * Use `unknown` for incoming props to avoid `any` and the Next.js PageProps
+ * mismatch. We then safely await and extract `id` with runtime checks.
  */
-export default async function Page({ params }: any) {
-  // await params before using its properties — required by Next.js
-  const p = await params;
-  const id = p?.id ?? "";
+export default async function Page({ params }: { params: unknown }) {
+  // Next sometimes provides params as a Promise — await it safely.
+  const resolved = await params;
 
-  // Render the client TradeViewPage component (unchanged logic)
+  // resolved may be anything; guard it and extract id if present and a string.
+  let id = "";
+  if (resolved && typeof resolved === "object") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const maybe = resolved as Record<string, unknown>;
+    const raw = maybe["id"];
+    if (typeof raw === "string") {
+      id = raw;
+    } else if (typeof raw === "number") {
+      id = String(raw);
+    } else if (raw != null) {
+      // fallback: attempt to stringify (keeps behavior stable)
+      id = String(raw);
+    }
+  }
+
   return <TradeViewPage tradeId={id} />;
 }
