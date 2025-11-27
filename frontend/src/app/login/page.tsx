@@ -9,28 +9,47 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/use-toast";
 import { Loader2, Mail, Lock, LogIn } from "lucide-react";
 
-// import the auth API
 import { authApi } from "@/api/auth";
+
+interface LoginForm {
+  email: string;
+  password: string;
+}
+
+function getErrorMessage(err: unknown): string {
+  if (!err) return "Login failed";
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err) {
+    try {
+      const maybe = (err as { message?: unknown }).message;
+      return typeof maybe === "string" ? maybe : String(maybe ?? "Login failed");
+    } catch {
+      return "Login failed";
+    }
+  }
+  return String(err);
+}
 
 export default function LoginPage() {
   const router = useRouter();
-  const [loading, setLoading] = React.useState(false);
-  const [form, setForm] = React.useState({ email: "", password: "" });
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [form, setForm] = React.useState<LoginForm>({ email: "", password: "" });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm({ ...form, [e.target.name]: e.target.value });
+    setForm({ ...form, [e.target.name]: e.target.value } as LoginForm);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     try {
       const data = await authApi.login(form);
 
       toast({ title: "Logged in", description: "Welcome back to your trading journal!" });
-      localStorage.setItem("token", data.token);
+      localStorage.setItem("token", (data as { token?: string })?.token ?? "");
       router.push("/dashboard");
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message || "Login failed", variant: "destructive" });
+    } catch (err: unknown) {
+      const msg = getErrorMessage(err);
+      toast({ title: "Error", description: msg || "Login failed", variant: "destructive" });
     } finally {
       setLoading(false);
     }

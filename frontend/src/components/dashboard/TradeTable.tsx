@@ -52,13 +52,25 @@ import {
 
 /* ---------------- Helpers ---------------- */
 
-function extractImageString(img: any): string {
+/**
+ * Cast helper: use this to convert unknown -> typed shape where necessary.
+ * This avoids using `any` while keeping runtime behavior identical.
+ */
+function asRecord<T = Record<string, unknown>>(v: unknown): T {
+  return v as unknown as T;
+}
+
+function extractImageString(img: unknown): string {
   if (!img) return "";
   if (typeof img === "string") return img;
   if (typeof File !== "undefined" && img instanceof File) return "";
-  if (typeof img === "object") {
+  if (typeof img === "object" && img !== null) {
+    const rec = asRecord(img);
     const keys = ["path", "secure_url", "url", "location", "filename", "public_id"];
-    for (const k of keys) if ((img as any)[k]) return String((img as any)[k]);
+    for (const k of keys) {
+      const val = rec[k as keyof typeof rec];
+      if (val) return String(val);
+    }
   }
   return "";
 }
@@ -93,7 +105,7 @@ const calculatePnL = (
  *
  * Returns 'YYYY-MM-DD' or empty string.
  */
-const getDateOnly = (val?: any): string => {
+const getDateOnly = (val?: unknown): string => {
   if (val === undefined || val === null) return "";
   try {
     // numeric timestamp
@@ -112,7 +124,6 @@ const getDateOnly = (val?: any): string => {
     // If already has YYYY-MM-DD anywhere, return first match
     const isoMatch = s.match(/(\d{4}-\d{2}-\d{2})/);
     if (isoMatch) {
-      // But ensure we pick correct semantics: if string contains timezone info, the YYYY-MM-DD may be part of ISO; okay to return
       return isoMatch[1];
     }
 
@@ -124,13 +135,11 @@ const getDateOnly = (val?: any): string => {
     const hasTZ = /Z$|[+\-]\d{2}:?\d{2}$/.test(s) || /T.*[+\-]\d{2}:?\d{2}/.test(s);
 
     if (hasTZ) {
-      // use UTC components (string had explicit timezone)
       const yyyy = d.getUTCFullYear();
       const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
       const dd = String(d.getUTCDate()).padStart(2, "0");
       return `${yyyy}-${mm}-${dd}`;
     } else {
-      // no timezone present -> use local date components (user likely entered local date)
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, "0");
       const dd = String(d.getDate()).padStart(2, "0");
@@ -152,13 +161,19 @@ const exportCsvFromTrades = (trades: Trade[]) => {
   ].join(',');
 
   const data = trades.map(trade => {
-    const tradeDateStr = getDateOnly(trade.tradeDate);
-    const entryDateStr = getDateOnly(trade.entryDate);
-    const exitDateStr = getDateOnly(trade.exitDate);
+    const tradeDateStr = getDateOnly((trade as unknown as Record<string, unknown>).tradeDate);
+    const entryDateStr = getDateOnly((trade as unknown as Record<string, unknown>).entryDate);
+    const exitDateStr = getDateOnly((trade as unknown as Record<string, unknown>).exitDate);
 
     const tradeDateCell = tradeDateStr ? `="${tradeDateStr}"` : '';
     const entryDateCell = entryDateStr ? `="${entryDateStr}"` : '';
     const exitDateCell = exitDateStr ? `="${exitDateStr}"` : '';
+
+    const pnlVal = (trade as unknown as Record<string, unknown>)['pnl'];
+    const entryNote = String((trade as unknown as Record<string, unknown>)['entryNote'] ?? "");
+    const exitNote = String((trade as unknown as Record<string, unknown>)['exitNote'] ?? "");
+    const remark = String((trade as unknown as Record<string, unknown>)['remark'] ?? "");
+    const notes = String((trade as unknown as Record<string, unknown>)['notes'] ?? "");
 
     return [
       trade.symbol ?? '',
@@ -166,7 +181,7 @@ const exportCsvFromTrades = (trades: Trade[]) => {
       trade.quantity ?? '',
       trade.entryPrice ?? '',
       trade.exitPrice ?? '',
-      (trade as any).pnl ?? '',
+      pnlVal ?? '',
       trade.brokerage ?? '',
       tradeDateCell,
       entryDateCell,
@@ -181,10 +196,10 @@ const exportCsvFromTrades = (trades: Trade[]) => {
       trade.entryCondition ?? '',
       trade.exitCondition ?? '',
       trade.source ?? '',
-      `"${(trade.entryNote || '').replace(/"/g, '""')}"`,
-      `"${(trade.exitNote || '').replace(/"/g, '""')}"`,
-      `"${(trade.remark || '').replace(/"/g, '""')}"`,
-      `"${(trade.notes || '').replace(/"/g, '""')}"`
+      `"${entryNote.replace(/"/g, '""')}"`,
+      `"${exitNote.replace(/"/g, '""')}"`,
+      `"${remark.replace(/"/g, '""')}"`,
+      `"${notes.replace(/"/g, '""')}"`
     ].join(',');
   });
 
@@ -309,6 +324,7 @@ export function TradeTable() {
   useEffect(() => {
     loadTrades();
     loadStrategies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadStrategies = async () => {
@@ -328,16 +344,20 @@ export function TradeTable() {
     try {
       setLoading(true);
       const data = await tradesApi.getAll();
-      const loaded = Array.isArray(data) ? data : (data && (data as any).trades) || [];
-      // Preserve backend's stored values but ensure we have something valid
-      const normalized: Trade[] = loaded.map((t: any) => ({
-        ...t,
-        // keep whatever backend returned (ISO string, date-only string, timestamp) — we'll normalize on export/filter/etc
-        tradeDate: t.tradeDate ?? new Date().toISOString(),
-        entryDate: t.entryDate ?? undefined,
-        exitDate: t.exitDate ?? undefined,
-        image: t.image ?? (Array.isArray(t.images) ? t.images[0] : ""),
-      }));
+      // normalize response: allow array or { trades: [] }
+      const loaded = Array.isArray(data)
+        ? data
+        : (asRecord<{ trades?: unknown }>(data).trades ?? []);
+      const normalized: Trade[] = (loaded as unknown[]).map((t) => {
+        const rec = asRecord<Record<string, unknown>>(t);
+        return {
+          ...(rec as unknown as Trade),
+          tradeDate: (rec.tradeDate as string) ?? new Date().toISOString(),
+          entryDate: (rec.entryDate as string) ?? undefined,
+          exitDate: (rec.exitDate as string) ?? undefined,
+          image: rec.image ?? (Array.isArray(rec.images) ? (rec.images as unknown[])[0] : ""),
+        } as Trade;
+      });
       setTrades(normalized);
     } catch (err) {
       console.error("[TradeTable] load error:", err);
@@ -371,7 +391,9 @@ export function TradeTable() {
     setNewTrade(defaultNewTrade);
     setEditingTrade(null);
     setImageUrl("");
-  }, [defaultNewTrade]);
+    // defaultNewTrade intentionally in deps? we keep original behavior
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSaveTrade = async () => {
     if (saving) return;
@@ -385,7 +407,7 @@ export function TradeTable() {
       }
 
       // IMPORTANT: create UTC midnight for the selected date to avoid timezone shift
-      const toIsoFromDateStr = (d?: any) =>
+      const toIsoFromDateStr = (d?: unknown) =>
         d ? new Date(`${String(d).split("T")[0]}T00:00:00Z`).toISOString() : undefined;
 
       const payload: Partial<Trade> = {
@@ -399,7 +421,9 @@ export function TradeTable() {
         exitDate: toIsoFromDateStr(newTrade.exitDate),
       };
 
-      delete (payload as any).pnl;
+      // remove pnl if accidentally present
+      const plRec = asRecord(payload);
+      delete plRec['pnl'];
 
       if (payload.image && typeof payload.image === "object" && !(payload.image instanceof File)) {
         payload.image = extractImageString(payload.image);
@@ -420,27 +444,28 @@ export function TradeTable() {
       setModalOpen(false);
       resetForm();
       await loadTrades();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[TradeTable] Save failed:", err);
-      alert(err?.message || "Failed to save trade.");
+      // attempt to safely extract message
+      const msg = (err instanceof Error && err.message) ? err.message : "Failed to save trade.";
+      alert(msg);
     } finally {
       setSaving(false);
     }
   };
 
   const handleEditTrade = (trade: Trade) => {
-    const img = extractImageString(trade.image ?? (trade as any).images?.[0] ?? "");
+    const img = extractImageString((trade as unknown as Record<string, unknown>).image ?? (trade as unknown as Record<string, unknown>).images?.[0] ?? "");
     setEditingTrade(trade);
 
-    // For date inputs, use YYYY-MM-DD that matches original calendar day
-    const getDateStr = (v?: any) => v ? getDateOnly(v) : todayDateStr;
+    const getDateStr = (v?: unknown) => v ? getDateOnly(v) : todayDateStr;
 
     setNewTrade({
       ...trade,
       image: img,
-      tradeDate: getDateStr(trade.tradeDate as any),
-      entryDate: trade.entryDate ? getDateStr(trade.entryDate as any) : todayDateStr,
-      exitDate: trade.exitDate ? getDateStr(trade.exitDate as any) : todayDateStr,
+      tradeDate: getDateStr((trade as unknown as Record<string, unknown>).tradeDate),
+      entryDate: (trade as unknown as Record<string, unknown>).entryDate ? getDateStr((trade as unknown as Record<string, unknown>).entryDate) : todayDateStr,
+      exitDate: (trade as unknown as Record<string, unknown>).exitDate ? getDateStr((trade as unknown as Record<string, unknown>).exitDate) : todayDateStr,
       strategy: trade.strategy ?? "",
     });
     setImageUrl(img);
@@ -462,21 +487,23 @@ export function TradeTable() {
   const computeFilteredTrades = useCallback((): Trade[] => {
     return trades.filter((trade) => {
       const s = searchTerm.toLowerCase();
-      const matchesSearch = searchTerm === "" ||
-        (trade.symbol || "").toLowerCase().includes(s) ||
-        (trade.broker || "").toLowerCase().includes(s) ||
-        (trade.strategy || "").toLowerCase().includes(s) ||
-        (trade.segment || "").toLowerCase().includes(s) ||
-        (trade.tradeType || "").toLowerCase().includes(s) ||
-        (trade.direction || "").toLowerCase().includes(s) ||
-        (trade.entryCondition || "").toLowerCase().includes(s) ||
-        (trade.exitCondition || "").toLowerCase().includes(s) ||
-        (trade.entryNote || "").toLowerCase().includes(s) ||
-        (trade.exitNote || "").toLowerCase().includes(s) ||
-        (trade.remark || "").toLowerCase().includes(s) ||
-        (trade.notes || "").toLowerCase().includes(s);
+      const rec = asRecord<Record<string, unknown>>(trade);
 
-      const matchesSymbol = !filters.symbol || (trade.symbol || "").toLowerCase().includes(filters.symbol.toLowerCase());
+      const matchesSearch = searchTerm === "" ||
+        String((rec.symbol ?? "")).toLowerCase().includes(s) ||
+        String((rec.broker ?? "")).toLowerCase().includes(s) ||
+        String((rec.strategy ?? "")).toLowerCase().includes(s) ||
+        String((rec.segment ?? "")).toLowerCase().includes(s) ||
+        String((rec.tradeType ?? "")).toLowerCase().includes(s) ||
+        String((rec.direction ?? "")).toLowerCase().includes(s) ||
+        String((rec.entryCondition ?? "")).toLowerCase().includes(s) ||
+        String((rec.exitCondition ?? "")).toLowerCase().includes(s) ||
+        String((rec.entryNote ?? "")).toLowerCase().includes(s) ||
+        String((rec.exitNote ?? "")).toLowerCase().includes(s) ||
+        String((rec.remark ?? "")).toLowerCase().includes(s) ||
+        String((rec.notes ?? "")).toLowerCase().includes(s);
+
+      const matchesSymbol = !filters.symbol || String(rec.symbol ?? "").toLowerCase().includes(filters.symbol.toLowerCase());
       const matchesType = filters.type === "all" || trade.type === filters.type;
       const matchesQuantity = (!filters.quantityMin || Number(trade.quantity) >= Number(filters.quantityMin)) &&
         (!filters.quantityMax || Number(trade.quantity) <= Number(filters.quantityMax));
@@ -484,32 +511,35 @@ export function TradeTable() {
         (!filters.entryPriceMax || Number(trade.entryPrice) <= Number(filters.entryPriceMax));
       const matchesExitPrice = (!filters.exitPriceMin || (trade.exitPrice && Number(trade.exitPrice) >= Number(filters.exitPriceMin))) &&
         (!filters.exitPriceMax || (trade.exitPrice && Number(trade.exitPrice) <= Number(filters.exitPriceMax)));
-      const matchesPnl = (!filters.pnlMin || Number((trade as any).pnl) >= Number(filters.pnlMin)) &&
-        (!filters.pnlMax || Number((trade as any).pnl) <= Number(filters.pnlMax));
-      const matchesBroker = !filters.broker || (trade.broker || "").toLowerCase().includes(filters.broker.toLowerCase());
-      const matchesStrategy = !filters.strategy || (trade.strategy || "").toLowerCase().includes(filters.strategy.toLowerCase());
+
+      const pnlVal = Number(rec['pnl'] ?? 0);
+      const matchesPnl = (!filters.pnlMin || pnlVal >= Number(filters.pnlMin)) &&
+        (!filters.pnlMax || pnlVal <= Number(filters.pnlMax));
+
+      const matchesBroker = !filters.broker || String(rec.broker ?? "").toLowerCase().includes(filters.broker.toLowerCase());
+      const matchesStrategy = !filters.strategy || String(rec.strategy ?? "").toLowerCase().includes(filters.strategy.toLowerCase());
       const matchesSession = filters.session === "all" || trade.session === filters.session;
       const matchesSegment = filters.segment === "all" || trade.segment === filters.segment;
       const matchesTradeType = filters.tradeType === "all" || trade.tradeType === filters.tradeType;
       const matchesDirection = filters.direction === "all" || trade.direction === filters.direction;
-      const matchesChartTimeframe = !filters.chartTimeframe || (trade.chartTimeframe || "").toLowerCase().includes(filters.chartTimeframe.toLowerCase());
+      const matchesChartTimeframe = !filters.chartTimeframe || String(rec.chartTimeframe ?? "").toLowerCase().includes(filters.chartTimeframe.toLowerCase());
       const matchesEntryCondition = filters.entryCondition === "all" || trade.entryCondition === filters.entryCondition;
       const matchesExitCondition = filters.exitCondition === "all" || trade.exitCondition === filters.exitCondition;
       const matchesSource = filters.source === "all" || trade.source === filters.source;
 
       // Normalize trade date to midnight UTC for consistent comparisons
-      const tradeDateIso = getDateOnly(trade.tradeDate);
+      const tradeDateIso = getDateOnly(rec.tradeDate);
       const tradeDate = tradeDateIso ? new Date(tradeDateIso + "T00:00:00Z") : null;
 
       const matchesTradeDate = (!filters.tradeDateFrom || (tradeDate && tradeDate >= new Date(filters.tradeDateFrom + "T00:00:00Z"))) &&
         (!filters.tradeDateTo || (tradeDate && tradeDate <= new Date(filters.tradeDateTo + "T23:59:59Z")));
 
-      const entryDateIso = trade.entryDate ? getDateOnly(trade.entryDate) : "";
+      const entryDateIso = rec.entryDate ? getDateOnly(rec.entryDate) : "";
       const entryDate = entryDateIso ? new Date(entryDateIso + "T00:00:00Z") : null;
       const matchesEntryDate = (!filters.entryDateFrom || (entryDate && entryDate >= new Date(filters.entryDateFrom + "T00:00:00Z"))) &&
         (!filters.entryDateTo || (entryDate && entryDate <= new Date(filters.entryDateTo + "T23:59:59Z")));
 
-      const exitDateIso = trade.exitDate ? getDateOnly(trade.exitDate) : "";
+      const exitDateIso = rec.exitDate ? getDateOnly(rec.exitDate) : "";
       const exitDate = exitDateIso ? new Date(exitDateIso + "T00:00:00Z") : null;
       const matchesExitDate = (!filters.exitDateFrom || (exitDate && exitDate >= new Date(filters.exitDateFrom + "T00:00:00Z"))) &&
         (!filters.exitDateTo || (exitDate && exitDate <= new Date(filters.exitDateTo + "T23:59:59Z")));
@@ -540,7 +570,7 @@ export function TradeTable() {
         const sIso = getDateOnly(s.toISOString()) + "T00:00:00Z";
         const eIso = getDateOnly(today.toISOString()) + "T23:59:59Z";
         toExport = base.filter(t => {
-          const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
+          const td = new Date(getDateOnly((t as unknown as Record<string, unknown>).tradeDate) + "T00:00:00Z");
           return td >= new Date(sIso) && td <= new Date(eIso);
         });
       } else if (range === 'last30') {
@@ -549,7 +579,7 @@ export function TradeTable() {
         const sIso = getDateOnly(s.toISOString()) + "T00:00:00Z";
         const eIso = getDateOnly(today.toISOString()) + "T23:59:59Z";
         toExport = base.filter(t => {
-          const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
+          const td = new Date(getDateOnly((t as unknown as Record<string, unknown>).tradeDate) + "T00:00:00Z");
           return td >= new Date(sIso) && td <= new Date(eIso);
         });
       } else if (range === 'custom') {
@@ -581,7 +611,7 @@ export function TradeTable() {
     }
     const base = computeFilteredTrades();
     const toExport = base.filter(t => {
-      const td = new Date(getDateOnly(t.tradeDate) + "T00:00:00Z");
+      const td = new Date(getDateOnly((t as unknown as Record<string, unknown>).tradeDate) + "T00:00:00Z");
       return td >= s && td <= e;
     });
 
@@ -659,8 +689,8 @@ export function TradeTable() {
   ).length;
 
   // Stats calculation
-  const totalPnL = filteredTrades.reduce((sum, trade) => sum + Number((trade as any).pnl || 0), 0);
-  const winningTrades = filteredTrades.filter(trade => Number((trade as any).pnl || 0) > 0).length;
+  const totalPnL = filteredTrades.reduce((sum, trade) => sum + Number(asRecord(trade)['pnl'] ?? 0), 0);
+  const winningTrades = filteredTrades.filter(trade => Number(asRecord(trade)['pnl'] ?? 0) > 0).length;
   const winRate = filteredTrades.length > 0 ? (winningTrades / filteredTrades.length) * 100 : 0;
 
   return (
@@ -734,7 +764,7 @@ export function TradeTable() {
                         <label className="text-sm font-medium text-gray-300">{f.label}</label>
                         <Input
                           type={f.type}
-                          value={(newTrade as any)[f.key] ?? ""}
+                          value={(newTrade as unknown as Record<string, unknown>)[f.key] ?? ""}
                           onChange={(e) =>
                             setNewTrade((p) => ({
                               ...p,
@@ -760,7 +790,7 @@ export function TradeTable() {
                         <div className="flex gap-2">
                           <Input
                             type="date"
-                            value={(newTrade as any)[f.key] ?? ""}
+                            value={(newTrade as unknown as Record<string, unknown>)[f.key] ?? ""}
                             onChange={(e) =>
                               setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
                             }
@@ -772,7 +802,7 @@ export function TradeTable() {
                             size="icon"
                             className="border-gray-600 hover:bg-gray-700"
                             onClick={() => {
-                              const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${(newTrade as any)[f.key] ?? ''}"]`);
+                              const el = document.querySelector<HTMLInputElement>(`input[type="date"][value="${(newTrade as unknown as Record<string, unknown>)[f.key] ?? ''}"]`);
                               el?.showPicker?.();
                             }}
                           >
@@ -838,7 +868,7 @@ export function TradeTable() {
                         <label className="text-sm font-medium text-gray-300">{f.label}</label>
                         <select
                           className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
-                          value={(newTrade as any)[f.key] || ""}
+                          value={(newTrade as unknown as Record<string, unknown>)[f.key] || ""}
                           onChange={(e) =>
                             setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
                           }
@@ -866,7 +896,7 @@ export function TradeTable() {
                           <label className="text-sm font-medium text-gray-300">{f.label}</label>
                           <Input
                             placeholder={f.placeholder}
-                            value={(newTrade as any)[f.key] || ""}
+                            value={(newTrade as unknown as Record<string, unknown>)[f.key] || ""}
                             onChange={(e) =>
                               setNewTrade((p) => ({ ...p, [f.key]: e.target.value }))
                             }

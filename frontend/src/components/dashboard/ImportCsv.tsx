@@ -11,7 +11,7 @@ type Props = {
 
 const REQUIRED_COLUMNS = [
   "Symbol",
-  "Quantity", 
+  "Quantity",
   "Entry Price",
   "Exit Price",
   "Entry Date",
@@ -36,7 +36,7 @@ export default function ImportCsv({ onImported }: Props) {
     setSuccess(false);
 
     try {
-      await importCsvApi.uploadMultiple(files, (percent) => setProgress(percent));
+      await importCsvApi.uploadMultiple(files, (percent: number) => setProgress(percent));
 
       setSuccess(true);
       setProgress(100);
@@ -45,8 +45,16 @@ export default function ImportCsv({ onImported }: Props) {
         if (onImported) onImported();
         setProgress(0);
       }, 1200);
-    } catch (err: any) {
-      setError(err?.error || err?.message || "Import failed");
+    } catch (err: unknown) {
+      // Safely extract message without using `any`
+      const maybeObj = err as Record<string, unknown> | undefined;
+      const extracted =
+        (maybeObj && typeof maybeObj.error === "string" && maybeObj.error) ||
+        (maybeObj && typeof maybeObj.message === "string" && maybeObj.message) ||
+        (typeof err === "string" ? err : undefined) ||
+        "Import failed";
+
+      setError(extracted);
       setProgress(0);
     } finally {
       setLoading(false);
@@ -66,7 +74,7 @@ export default function ImportCsv({ onImported }: Props) {
           <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 shadow-inner">
             <Upload className="w-5 h-5 text-blue-400" />
           </div>
-          
+
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-semibold text-white">Import Trades</h2>
@@ -108,11 +116,11 @@ export default function ImportCsv({ onImported }: Props) {
             <FileText className="w-4 h-4 text-gray-400" />
             <span className="text-sm font-medium text-white">Required CSV Format</span>
           </div>
-          <ChevronDown 
-            className={`w-4 h-4 text-gray-500 transition-transform ${showRequirements ? 'rotate-180' : ''}`}
+          <ChevronDown
+            className={`w-4 h-4 text-gray-500 transition-transform ${showRequirements ? "rotate-180" : ""}`}
           />
         </button>
-        
+
         {showRequirements && (
           <div className="px-4 pb-4 space-y-4 border-t border-gray-800 pt-4">
             <div>
@@ -128,13 +136,13 @@ export default function ImportCsv({ onImported }: Props) {
                 ))}
               </div>
             </div>
-            
+
             <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700">
               <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
                 <Sparkles className="w-3 h-3 text-blue-400" />
               </div>
               <div className="text-xs text-gray-300">
-                <span className="font-medium text-white">Pro Tip:</span> Include header row and use YYYY-MM-DD date format. 
+                <span className="font-medium text-white">Pro Tip:</span> Include header row and use YYYY-MM-DD date format.
                 Files with missing required columns will be skipped automatically.
               </div>
             </div>

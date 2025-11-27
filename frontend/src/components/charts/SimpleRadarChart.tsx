@@ -28,10 +28,18 @@ function formatCurrency(v?: number) {
   return `${sign}₹${Math.abs(v).toFixed(2)}`;
 }
 
+/** Props for the custom radar tooltip */
+type RadarTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload?: DataItem }>;
+};
+
 /** Custom tooltip to show effectiveness + totalPnl (with white text) */
-function RadarTooltip({ active, payload }: any) {
+function RadarTooltip({ active, payload }: RadarTooltipProps) {
   if (!active || !payload || !payload.length) return null;
-  const p = payload[0].payload as DataItem;
+  const p = payload[0].payload;
+  if (!p) return null;
+
   return (
     <div
       style={{
@@ -59,6 +67,13 @@ function RadarTooltip({ active, payload }: any) {
   );
 }
 
+/** Minimal tick props used by recharts' custom tick renderer */
+type AngleTickProps = {
+  x?: number;
+  y?: number;
+  payload?: { value?: string } | undefined;
+};
+
 export function SimpleRadarChart({ data, height = 500 }: Props) {
   const chartData = useMemo(
     () =>
@@ -76,16 +91,16 @@ export function SimpleRadarChart({ data, height = 500 }: Props) {
     <div className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart
-          cx="50%"            // perfect center
-          cy="50%"            // slightly lower for balanced composition
-          outerRadius="110%"   // 🔥 increased radius
+          cx="50%" // perfect center
+          cy="50%" // slightly lower for balanced composition
+          outerRadius="110%" // increased radius for breathing room
           data={chartData}
           margin={{ top: 20, right: 70, left: 70, bottom: 20 }}
         >
           <PolarGrid stroke="rgba(255,255,255,0.06)" />
           <PolarAngleAxis
             dataKey="strategy"
-            tick={({ x, y, payload }: any) => (
+            tick={({ x, y, payload }: AngleTickProps) => (
               <text
                 x={x}
                 y={y}

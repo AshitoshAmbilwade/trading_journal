@@ -7,62 +7,81 @@ export type GeneratePayload =
   | { type: "trade"; tradeId: string }
   | { type: "weekly" | "monthly"; startDate?: string; endDate?: string };
 
+/** Narrowing helpers */
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object";
+const hasKey = <K extends string>(obj: Record<string, unknown>, key: K): obj is Record<K, unknown> =>
+  Object.prototype.hasOwnProperty.call(obj, key);
+
 export function useGenerateAISummary() {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AISummary | null>(null);
 
-  const generate = useCallback(async (payload: GeneratePayload) => {
+  const generate = useCallback(async (payload: GeneratePayload): Promise<AISummary> => {
     setLoading(true);
     setError(null);
     setResult(null);
 
     try {
-      // Build request body for backend
-      const body: any = { type: payload.type };
+      // Build request body
+      type RequestBody =
+        | { type: "trade"; tradeId: string }
+        | { type: "weekly" | "monthly"; dateRange?: { start: string; end: string } };
 
+      let body: RequestBody;
       if (payload.type === "trade") {
-        body.tradeId = (payload as any).tradeId;
+        body = { type: "trade", tradeId: payload.tradeId };
       } else {
-        // weekly/monthly
-        if ((payload as any).startDate) {
-          body.dateRange = {
-            start: (payload as any).startDate,
-            end: (payload as any).endDate || (payload as any).startDate,
-          };
-        }
+        const start = payload.startDate;
+        const end = payload.endDate || payload.startDate;
+        body = {
+          type: payload.type,
+          dateRange: start ? { start, end: end as string } : undefined,
+        };
       }
 
-      const res = await aiSummariesApi.generate(body);
+      const res: unknown = await aiSummariesApi.generate(body as unknown);
 
-      // Backend might return:
-      // 1) { aiSummary: {...} } (immediate) OR
-      // 2) { summaryId: "..." } with 202 (queued)
-      // Our api wrapper returns raw `res` or throws — handle both
-      let aiSummary: AISummary | null = null;
-
-      if (!res) {
+      if (!isObject(res)) {
         throw new Error("Empty response from AI service");
       }
 
-      // If server returned the object directly (older shape)
-      if ((res as any).aiSummary) {
-        aiSummary = (res as any).aiSummary as AISummary;
-      } else if ((res as any).summaryId) {
-        // queued -> create minimal draft object so UI can show a placeholder
-        aiSummary = {
-          _id: (res as any).summaryId,
-          type: payload.type as any,
+      let aiSummary: AISummary | null = null;
+
+      // 1) { aiSummary: {...} }
+      if (hasKey(res, "aiSummary") && isObject(res.aiSummary)) {
+        aiSummary = (res.aiSummary as unknown) as AISummary;
+      }
+      // 2) queued -> { summaryId: "..." }
+      else if (hasKey(res, "summaryId") && typeof (res as Record<string, unknown>).summaryId === "string") {
+        const summaryId = (res as Record<string, unknown>).summaryId as string;
+        const draft = {
+          _id: summaryId,
+          type: payload.type,
           status: "draft",
           summaryText: "Queued - generating...",
           generatedAt: new Date().toISOString(),
         };
-      } else if ((res as any)._id) {
-        // maybe returned the summary directly
-        aiSummary = res as AISummary;
+        aiSummary = (draft as unknown) as AISummary;
+      }
+      // 3) returned the summary directly (has _id)
+      else if (hasKey(res, "_id")) {
+        aiSummary = (res as unknown) as AISummary;
+      }
+      // 4) nested under .data
+      else if (hasKey(res, "data") && isObject((res as Record<string, unknown>).data)) {
+        const data = (res as Record<string, unknown>).data!;
+        if (hasKey(data as Record<string, unknown>, "aiSummary") && isObject((data as Record<string, unknown>).aiSummary)) {
+          aiSummary = ((data as Record<string, unknown>).aiSummary as unknown) as AISummary;
+        } else {
+          aiSummary = (data as unknown) as AISummary;
+        }
       } else {
-        // Unknown shape: try to detect aiSummary nested somewhere
-        aiSummary = (res as any).data?.aiSummary || (res as any).data;
+        // best-effort: try common places
+        const maybeAiSummary = (res as Record<string, unknown>).aiSummary ?? (res as Record<string, unknown>).data;
+        if (isObject(maybeAiSummary)) {
+          aiSummary = (maybeAiSummary as unknown) as AISummary;
+        }
       }
 
       if (!aiSummary) {
@@ -71,16 +90,23 @@ export function useGenerateAISummary() {
 
       setResult(aiSummary);
       return aiSummary;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("generateAISummary error:", err);
       let message = "Failed to generate AI summary";
-      if (err?.message) {
-        if (typeof err.message === "string" && err.message.includes("<!DOCTYPE html>")) {
-          message = "AI summary service is currently unavailable. Check backend.";
-        } else {
-          message = err.message;
+
+      if (isObject(err) && hasKey(err, "message") && typeof (err as Record<string, unknown>).message === "string") {
+        const emsg = (err as Record<string, unknown>).message as unknown;
+        if (typeof emsg === "string") {
+          if (emsg.includes("<!DOCTYPE html>")) {
+            message = "AI summary service is currently unavailable. Check backend.";
+          } else {
+            message = emsg;
+          }
         }
+      } else if (typeof err === "string") {
+        message = err;
       }
+
       setError(message);
       throw new Error(message);
     } finally {

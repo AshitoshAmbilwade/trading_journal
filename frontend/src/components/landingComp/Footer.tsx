@@ -1,5 +1,5 @@
 "use client";
-import { Twitter, Youtube, Instagram, TrendingUp, Mail, Phone } from "lucide-react";
+import { Twitter, Youtube, Instagram, TrendingUp, Mail } from "lucide-react";
 
 export function Footer() {
   return (
@@ -15,7 +15,7 @@ export function Footer() {
               <h3 className="text-lg sm:text-xl">Earnotic</h3>
             </div>
             <p className="text-sm text-muted-foreground">
-              India's most advanced AI-powered trading journal. Built by traders, for traders.
+              India&apos;s most advanced AI-powered trading journal. Built by traders, for traders.
             </p>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Mail className="h-4 w-4" />

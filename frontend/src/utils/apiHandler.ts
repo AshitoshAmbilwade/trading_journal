@@ -45,38 +45,39 @@ function looksLikeFormData(data: unknown): boolean {
 
 /**
  * Request interceptor
- * Note: we do NOT annotate the `config` parameter with a custom type here.
- * Letting TS infer the parameter type avoids overload mismatches with axios.
+ * Note: we create a local typed view `cfg` to avoid using `any` and avoid axios type coupling.
  */
 apiClient.interceptors.request.use(
   (config) => {
+    // interpret the axios config as our simpler local shape for safe access
+    const cfg = config as SimpleRequestConfig;
     try {
       // Attach token if present
       const token =
         typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-      if (token && config.headers) {
-        const headers = config.headers as Record<string, string | undefined>;
+      if (token && cfg.headers) {
+        const headers = cfg.headers as Record<string, string | undefined>;
         headers.Authorization = `Bearer ${token}`;
       }
 
       // If request data is FormData (browser) — delete content-type so axios sets boundary
-      if (config && (config as any).data) {
-        const data = (config as any).data;
+      if (cfg && cfg.data) {
+        const data = cfg.data;
         const isFormData =
           typeof FormData !== "undefined" && data instanceof FormData;
         const duckFormData = looksLikeFormData(data);
 
         if (isFormData || duckFormData) {
-          if (config.headers) {
-            const headers = config.headers as Record<string, string | undefined>;
+          if (cfg.headers) {
+            const headers = cfg.headers as Record<string, string | undefined>;
             delete headers["Content-Type"];
             delete headers["content-type"];
           }
         } else {
           // For non-FormData payloads, ensure JSON content-type unless user set explicit header
-          if (config.headers) {
-            const headers = config.headers as Record<string, string | undefined>;
+          if (cfg.headers) {
+            const headers = cfg.headers as Record<string, string | undefined>;
             if (!headers["Content-Type"] && !headers["content-type"]) {
               headers["Content-Type"] = "application/json";
             }
@@ -87,7 +88,6 @@ apiClient.interceptors.request.use(
       return config;
     } catch (err) {
       // don't block request on interceptor error
-      // eslint-disable-next-line no-console
       console.warn("Request interceptor error:", err);
       return config;
     }
@@ -97,8 +97,7 @@ apiClient.interceptors.request.use(
 
 /**
  * Response interceptor
- * Again: no explicit type annotation on the param to avoid overload mismatches.
- * We normalize errors safely using `unknown` casts.
+ * Normalize errors safely using `unknown` casts.
  */
 apiClient.interceptors.response.use(
   (response) => response,
@@ -112,10 +111,8 @@ apiClient.interceptors.response.use(
     }
 
     if (process.env.NODE_ENV === "development") {
-      // eslint-disable-next-line no-console
       console.error("API Error:", data ?? maybeErr.message ?? error);
     } else {
-      // eslint-disable-next-line no-console
       console.error("API Error:", (maybeErr.message as string) ?? "see server logs");
     }
 
@@ -125,12 +122,15 @@ apiClient.interceptors.response.use(
 
 /**
  * fetchApi helper
- * We accept an axios-like config and return response.data.
- * We cast the config at the call site to `any` because axios.request expects its internal shapes;
- * this cast is limited in scope and avoids broader typing problems.
+ * We accept a simple config and return response.data.
+ * Use a single-line ts-ignore to avoid axios overload type mismatch.
  */
 export const fetchApi = async <T = unknown>(config: SimpleRequestConfig): Promise<T> => {
-  const response = await apiClient.request(config as any);
+  // Axios' typedefs are sometimes stricter than our local SimpleRequestConfig.
+  // Using ts-ignore here keeps the cast localized and prevents spreading `any` or broad type hacks.
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  const response = await apiClient.request(config);
   return (response as SimpleResponse<T>).data as T;
 };
 

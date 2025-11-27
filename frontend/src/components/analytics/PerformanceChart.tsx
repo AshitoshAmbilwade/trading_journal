@@ -49,9 +49,8 @@ export type Trade = {
   exitDate?: string;
   tradeDate?: string;
   createdAt?: string;
-  aiAnalysis?: any;
-  [k: string]: any;
-};
+  aiAnalysis?: unknown;
+} & Record<string, unknown>;
 
 interface PerformanceChartProps {
   data?: SeriesPoint[];
@@ -62,12 +61,6 @@ interface PerformanceChartProps {
 
 /**
  * PerformanceChart — per-trade scatter (one point per trade) + connecting line.
- * - Shows every trade as a dot (green/red).
- * - Connecting line joins the points (monotone).
- * - X axis shows every trade timestamp (ticks derived from trades).
- * - Tooltip (black) shows pnl, type, qty, entry/exit prices and entry/exit dates (dd MMM yyyy).
- * - Responsive dot sizes.
- * - Minimal changes to your previous style.
  */
 export function PerformanceChart({
   data,
@@ -75,7 +68,7 @@ export function PerformanceChart({
   interval = "daily",
   loading = false,
 }: PerformanceChartProps) {
-  // responsive dot radius (small phones -> 3, tablets -> 5, desktop -> 7)
+  // responsive dot radius
   const useWindowWidth = () => {
     const [w, setW] = useState<number>(typeof window !== "undefined" ? window.innerWidth : 1200);
     useEffect(() => {
@@ -97,26 +90,23 @@ export function PerformanceChart({
   const intervalLabel =
     interval === "daily" ? "Day-by-day P/L" : interval === "weekly" ? "Week-by-week P/L" : "Month-by-month P/L";
 
-  // Build scatter data: each trade => one point. Use createdAt as fallback to avoid missing points.
+  // Build scatter data
   const scatterData = useMemo(() => {
     if (!trades?.length) return [];
     return trades
       .map((tr) => {
-        const dateStr = tr.entryDate ?? tr.tradeDate ?? tr.exitDate ?? tr.createdAt;
+        const dateStr = (tr.entryDate as string) ?? (tr.tradeDate as string) ?? (tr.exitDate as string) ?? (tr.createdAt as string);
         const d = dateStr ? new Date(dateStr) : new Date();
         return {
           x: d.getTime(),
           y: Number(tr.pnl ?? 0),
           _trade: tr,
-          // label kept for debug / axis formatting if needed
           label: format(d, interval === "monthly" ? "MMM yyyy" : "dd MMM"),
         };
       })
       .sort((a, b) => a.x - b.x);
   }, [trades, interval]);
 
-  // If scatterData contains multiple trades with same timestamp they will still appear;
-  // providing explicit ticks ensures x-axis has each point shown.
   const xTicks = useMemo(() => scatterData.map((p) => p.x), [scatterData]);
 
   const yMinMax = useMemo(() => {
@@ -130,11 +120,24 @@ export function PerformanceChart({
 
   const lineData = useMemo(() => (data?.length ? data.map((d) => ({ date: d.date, pnl: Number(d.pnl ?? 0) })) : []), [data]);
 
-  // Custom dot renderer to color per-point (profit green / loss red)
-  const CustomDot = (props: any) => {
+  // Custom dot renderer — typed with unknown and narrowed
+  type CustomDotProps = {
+    cx?: number | null;
+    cy?: number | null;
+    payload?: unknown;
+  };
+
+  const CustomDot: React.FC<CustomDotProps> = (props) => {
     const { cx, cy, payload } = props;
     if (cx == null || cy == null) return null;
-    const pnl = Number(payload?.y ?? 0);
+
+    // payload should be an object with y value
+    let pnl = 0;
+    if (payload && typeof payload === "object") {
+      const p = payload as Record<string, unknown>;
+      pnl = Number(p.y ?? 0);
+    }
+
     const color = pnl >= 0 ? "#10B981" : "#EF4444"; // green / red
     return (
       <g>
@@ -144,69 +147,87 @@ export function PerformanceChart({
     );
   };
 
-  /* ---------- Custom Tooltip: show only requested fields (no time, no broker) ---------- */
-  const TradeTooltip: React.FC<any> = ({ active, payload }) => {
-    if (!active || !payload?.length) return null;
-    const p = payload[0].payload;
-    const trade: Trade | undefined = p?._trade;
-    if (!trade) return null;
+  /* ---------- Custom Tooltip ---------- */
+  type TooltipProps = {
+    active?: boolean;
+    payload?: unknown[];
+  };
 
-    const fmtPrice = (val?: number) => (val == null ? "-" : Number(val).toFixed(2));
-    const fmtDate = (v?: string) => {
+  const TradeTooltip: React.FC<TooltipProps> = ({ active, payload }) => {
+    if (!active || !Array.isArray(payload) || payload.length === 0) return null;
+    const p0 = payload[0] as Record<string, unknown> | undefined;
+    const p = p0?.payload;
+    if (!p || typeof p !== "object") return null;
+    const tradeObj = (p as Record<string, unknown>)["_trade"] as Trade | undefined;
+    if (!tradeObj) return null;
+
+    const fmtPrice = (val?: unknown) => {
+      const n = Number(val as unknown);
+      return Number.isFinite(n) ? n.toFixed(2) : "-";
+    };
+    const fmtDate = (v?: unknown) => {
       if (!v) return "-";
       try {
-        return format(new Date(v), "dd MMM yyyy");
+        return format(new Date(String(v)), "dd MMM yyyy");
       } catch {
         return "-";
       }
     };
-    const shortSummary =
-      trade.aiAnalysis && typeof trade.aiAnalysis === "string"
-        ? trade.aiAnalysis.slice(0, 140)
-        : trade.aiAnalysis
-        ? JSON.stringify(trade.aiAnalysis).slice(0, 140)
-        : null;
+
+    // short summary from aiAnalysis (string or object)
+    const shortSummary = (() => {
+      const a = tradeObj.aiAnalysis;
+      if (!a) return null;
+      if (typeof a === "string") return a.slice(0, 140);
+      try {
+        return JSON.stringify(a).slice(0, 140);
+      } catch {
+        return null;
+      }
+    })();
+
+    const pnlNum = Number(tradeObj.pnl ?? 0);
 
     return (
       <div className="bg-black/95 text-white border border-white/8 p-3 rounded-md shadow-lg min-w-[220px]">
         <div className="flex justify-between items-center mb-1">
-          <div className="font-medium">{trade.symbol ?? "-"}</div>
-          <div className={`text-sm font-semibold ${Number(trade.pnl ?? 0) >= 0 ? "text-green-400" : "text-red-300"}`}>
-            {Number(trade.pnl ?? 0) >= 0 ? "+" : ""}₹{Number(trade.pnl ?? 0).toFixed(2)}
+          <div className="font-medium">{tradeObj.symbol ?? "-"}</div>
+          <div className={`text-sm font-semibold ${pnlNum >= 0 ? "text-green-400" : "text-red-300"}`}>
+            {pnlNum >= 0 ? "+" : ""}₹{Number(pnlNum).toFixed(2)}
           </div>
         </div>
 
         <div className="text-xs text-gray-300 space-y-1">
           <div>
             <span className="text-gray-400">Type: </span>
-            {trade.type ?? "-"}
+            {tradeObj.type ?? "-"}
           </div>
           <div>
             <span className="text-gray-400">Direction: </span>
-            {trade.direction ?? "-"}
+            {tradeObj.direction ?? "-"}
           </div>
-          
+
           <div>
             <span className="text-gray-400">Qty: </span>
-            {trade.quantity ?? "-"}
+            {tradeObj.quantity ?? "-"}
           </div>
 
           <div>
             <span className="text-gray-400">Entry: </span>
-            {fmtPrice(trade.entryPrice)}{" "}
-            <span className="text-gray-500">• {fmtDate(trade.entryDate ?? trade.createdAt)}</span>
+            {fmtPrice(tradeObj.entryPrice)}{" "}
+            <span className="text-gray-500">• {fmtDate(tradeObj.entryDate ?? tradeObj.createdAt)}</span>
           </div>
 
           <div>
             <span className="text-gray-400">Exit: </span>
-            {fmtPrice(trade.exitPrice)}{" "}
-            <span className="text-gray-500">• {fmtDate(trade.exitDate ?? trade.createdAt)}</span>
+            {fmtPrice(tradeObj.exitPrice)}{" "}
+            <span className="text-gray-500">• {fmtDate(tradeObj.exitDate ?? tradeObj.createdAt)}</span>
           </div>
 
           {shortSummary && (
             <div className="pt-2 border-t border-white/6 text-[12px] text-gray-300 mt-2">
               {shortSummary}
-              {String(trade.aiAnalysis).length > 140 ? "…" : ""}
+              {String(tradeObj.aiAnalysis ?? "").length > 140 ? "…" : ""}
             </div>
           )}
         </div>
@@ -284,7 +305,7 @@ export function PerformanceChart({
                   dataKey="x"
                   domain={["dataMin", "dataMax"]}
                   ticks={xTicks}
-                  tickFormatter={(ts) => (interval === "monthly" ? format(new Date(ts), "MMM yyyy") : format(new Date(ts), "dd MMM"))}
+                  tickFormatter={(ts) => (interval === "monthly" ? format(new Date(Number(ts)), "MMM yyyy") : format(new Date(Number(ts)), "dd MMM"))}
                   tick={{ fontSize: 12, fill: "#aaa" }}
                 />
                 <YAxis
@@ -297,9 +318,7 @@ export function PerformanceChart({
                 <ZAxis type="number" dataKey="y" range={[70, 280]} />
                 <ReferenceLine y={0} stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
                 <ReTooltip cursor={{ stroke: "rgba(255,255,255,0.05)" }} content={<TradeTooltip />} wrapperStyle={{ zIndex: 50 }} />
-                {/* connecting line */}
                 <Line type="monotone" dataKey="y" stroke="#06b6d4" strokeWidth={2} dot={false} isAnimationActive={false} />
-                {/* dots */}
                 <Scatter name="Trades" data={scatterData} shape={<CustomDot />} />
               </ComposedChart>
             </ResponsiveContainer>

@@ -1,4 +1,5 @@
 // src/components/reports/types.ts
+
 export interface WeeklyStats {
   totalTrades?: number;
   winningTrades?: number;
@@ -7,8 +8,8 @@ export interface WeeklyStats {
   totalPnL?: number | string;
   totalPnLDisplay?: string;
   avgPnLPerTrade?: number;
-  bestTrade?: any;
-  worstTrade?: any;
+  bestTrade?: Trade | null;
+  worstTrade?: Trade | null;
   strategiesUsed?: string[];
   dominantIssues?: string[];
   riskRewardRatio?: number;
@@ -31,12 +32,17 @@ export interface Trade {
   pnlDisplay?: string;
   duration?: number;
   roi?: number;
+  // keep catch-all for extra fields that may exist on trades (avoid `any`)
+  [k: string]: unknown;
 }
 
 export interface DateRange {
   start?: string;
   end?: string;
 }
+
+/** Small, explicit shape for legacy / unknown structured fields */
+export type LegacyStats = Record<string, unknown>;
 
 export interface ExtendedAISummary {
   _id?: string;
@@ -61,7 +67,7 @@ export interface ExtendedAISummary {
   minusPoints?: string[];
   aiSuggestions?: string[];
   weeklyStats?: WeeklyStats;        // parser may put structured stats here
-  stats?: any;                     // legacy
+  stats?: LegacyStats;             // legacy — use a safe Record instead of `any`
   narrative?: string;              // long-form narrative produced by LLM
   type?: "weekly" | "monthly" | "trade" | string;
   dateRange?: DateRange;

@@ -2,11 +2,14 @@
 
 import React from "react";
 import { useGenerateAISummary } from "./useGenerateAISummary";
+import type { AISummary as RemoteAISummary } from "../../api/aiSummaries";
+
+type AISummary = RemoteAISummary | null;
 
 type BaseProps = {
   className?: string;
   children?: React.ReactNode;
-  onDone?: (summary: any) => void;
+  onDone?: (summary: AISummary) => void;
   onError?: (error: string) => void;
 };
 
@@ -28,8 +31,10 @@ export default function GenerateAISummaryButton(props: Props) {
 
   const handleClick = async () => {
     try {
-      let res;
+      let res: AISummary = null;
+
       if (props.mode === "trade") {
+        // Type guard ensures TradeProps
         if (!("tradeId" in props) || !props.tradeId) {
           const errorMsg = "tradeId is required for trade summary generation.";
           alert(errorMsg);
@@ -38,12 +43,12 @@ export default function GenerateAISummaryButton(props: Props) {
         }
         res = await generate({ type: "trade", tradeId: props.tradeId });
       } else {
-        const start = (props as any).startDate;
-        const end = (props as any).endDate;
+        // props.mode is "weekly" | "monthly" so it's PeriodProps
+        const { startDate, endDate } = props as PeriodProps;
         res = await generate({
           type: props.mode,
-          startDate: start,
-          endDate: end,
+          startDate,
+          endDate,
         });
       }
 
@@ -53,9 +58,9 @@ export default function GenerateAISummaryButton(props: Props) {
       }
 
       props.onDone?.(res);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Generate button error:", err);
-      const errorMsg = err?.message || "Failed to generate AI summary. Please check the backend service.";
+      const errorMsg = err instanceof Error ? err.message : String(err ?? "Failed to generate AI summary. Please check the backend service.");
       alert(errorMsg);
       props.onError?.(errorMsg);
     }

@@ -3,10 +3,17 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Icons } from "@/components/icons"; // optional (we'll define this below)
+import { Icons } from "@/components/icons"; // (unused, safe to keep)
 import { toast } from "@/components/ui/use-toast";
 import { Loader2, Mail, Lock, User, LogIn } from "lucide-react";
 import { authApi } from "@/api/auth";
@@ -14,30 +21,61 @@ import { authApi } from "@/api/auth";
 export default function RegisterPage() {
   const router = useRouter();
   const [loading, setLoading] = React.useState(false);
-  const [form, setForm] = React.useState({ name: "", email: "", password: "" });
+  const [form, setForm] = React.useState({
+    name: "",
+    email: "",
+    password: "",
+  });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setLoading(true);
-  try {
-    // call backend API via authApi
-    const data = await authApi.register(form);
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const result = await authApi.register(form);
 
-    toast({ title: "Account created", description: "Welcome to your trading journal!" });
-    localStorage.setItem("token", data.token);
-    router.push("/dashboard");
-  } catch (err: any) {
-    toast({ title: "Error", description: err.message || "Registration failed", variant: "destructive" });
-  } finally {
-    setLoading(false);
-  }
-};
+      // runtime type guard to ensure we received an object with a string token
+      function hasToken(obj: unknown): obj is { token: string } {
+        if (typeof obj !== "object" || obj === null) return false;
+        const rec = obj as Record<string, unknown>;
+        return "token" in rec && typeof rec.token === "string";
+      }
+
+      if (!hasToken(result)) {
+        throw new Error("Invalid response from server");
+      }
+
+      const data = result;
+
+      toast({
+        title: "Account created",
+        description: "Welcome to your trading journal!",
+      });
+
+      localStorage.setItem("token", data.token);
+      router.push("/dashboard");
+    } catch (err: unknown) {
+      // Safe error handling without using `any`
+      const message =
+        err instanceof Error ? err.message : "Registration failed. Please try again.";
+
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleGoogleLogin = () => {
-    toast({ title: "Coming soon", description: "Google login integration on the way!" });
+    toast({
+      title: "Coming soon",
+      description: "Google login integration on the way!",
+    });
   };
 
   return (

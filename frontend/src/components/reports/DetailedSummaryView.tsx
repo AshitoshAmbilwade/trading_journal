@@ -1,30 +1,114 @@
-// src/components/reports/DetailedSummaryView.tsx
 "use client";
 import React, { useState } from "react";
 import { motion } from "motion/react";
 import {
-  Calendar, Clock, X, Copy, Crown, Sparkles, TrendingUp, TrendingDown, PieChart, Trophy, Brain, Gem, ChartBar, Coins, Target, Activity, Star, CircleDot, AlertTriangle, Lightbulb, ChevronDown, ChevronUp
+  Calendar,
+  Clock,
+  X,
+  Copy,
+  Crown,
+  Sparkles,
+  TrendingUp,
+  TrendingDown,
+  PieChart,
+  Trophy,
+  Brain,
+  Gem,
+  ChartBar,
+  Coins,
+  Target,
+  Activity,
+  Star,
+  CircleDot,
+  AlertTriangle,
+  Lightbulb,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import GlassCard from "./GlassCard";
 import { ExtendedAISummary, Trade } from "./types";
-import { calculateAdvancedStats, getPnLDisplay, formatCurrency, formatDate, formatDateTime, formatPercentage } from "./utils";
+import {
+  calculateAdvancedStats,
+  getPnLDisplay,
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  formatPercentage,
+} from "./utils";
 import PerformanceMetric from "./PerformanceMetric";
 import AdvancedStatCard from "./AdvancedStatCard";
 import TradeCard from "./TradeCard";
 
+/* ---------- Small safe type helpers (avoid any) ---------- */
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((item) => typeof item === "string");
+}
+
+function safeNumberFromUnknown(src: unknown, key: string): number | undefined {
+  if (!isObject(src)) return undefined;
+  const val = src[key];
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (typeof val === "string" && val.trim() !== "") {
+    const n = Number(String(val).replace(/[^0-9.\-]/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+function safeGetArray(src: unknown, key: string): unknown[] | undefined {
+  if (!isObject(src)) return undefined;
+  const val = src[key];
+  if (Array.isArray(val)) return val;
+  return undefined;
+}
+
+function extractId(summary: ExtendedAISummary): string {
+  // prefer _id then id then fallback empty string
+  if (typeof (summary as Partial<ExtendedAISummary>)._id === "string") return (summary as Partial<ExtendedAISummary>)._id as string;
+  if (isObject(summary) && "id" in summary && typeof (summary as Record<string, unknown>).id === "string") {
+    return (summary as Record<string, unknown>).id as string;
+  }
+  return "";
+}
+
+/* ---------------- Component ---------------- */
+
 const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () => void }> = ({ summary, onClose }) => {
   const [showRaw, setShowRaw] = useState(false);
-  const id = summary._id || summary.id || "";
-  const currencySymbol = summary.inputSnapshot?.currencySymbol ?? "₹";
+  const id = extractId(summary); // safe id extraction
+  const currencySymbol =
+    isObject(summary.inputSnapshot) && typeof summary.inputSnapshot.currencySymbol === "string"
+      ? summary.inputSnapshot.currencySymbol
+      : "₹";
 
-  // prefer structured weeklyStats (parser) -> inputSnapshot.weeklyStats -> undefined
-  const stats = (summary.weeklyStats ?? summary.stats ?? summary.inputSnapshot?.weeklyStats) as any;
-  const trades: Trade[] = summary.inputSnapshot?.tradesSample || summary.snapshot?.tradesSample || (summary.trades || []);
-  const advancedStats = calculateAdvancedStats(trades, stats);
+  // stats: might exist in several places; treat as unknown and access safely
+  const statsUnknown: unknown = summary.weeklyStats ?? summary.stats ?? summary.inputSnapshot?.weeklyStats;
 
-  const pnlNumberForModal = Number(stats?.totalPnL ?? advancedStats.totalPnL);
+  // trades: ensure it's an array
+  const trades: Trade[] = Array.isArray(summary.inputSnapshot?.tradesSample)
+    ? (summary.inputSnapshot.tradesSample as Trade[])
+    : Array.isArray(summary.snapshot?.tradesSample)
+    ? (summary.snapshot.tradesSample as Trade[])
+    : Array.isArray(summary.trades)
+    ? (summary.trades as Trade[])
+    : [];
+
+  // pass unknown stats object to calculateAdvancedStats (it accepts flexible input in your codebase)
+  const advancedStats = calculateAdvancedStats(trades, (statsUnknown as Record<string, unknown>) ?? undefined);
+
+  const pnlNumberForModal =
+    Number(
+      (isObject(statsUnknown) && safeNumberFromUnknown(statsUnknown, "totalPnL") !== undefined)
+        ? safeNumberFromUnknown(statsUnknown, "totalPnL")
+        : advancedStats.totalPnL,
+    );
+
   const isPositive = !Number.isNaN(pnlNumberForModal) && pnlNumberForModal > 0;
   const winRate = Math.round(advancedStats.winRate);
 
@@ -33,22 +117,32 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
       if (!text) return;
       await navigator.clipboard?.writeText(text);
     } catch (e) {
+      // keep console for debugging
+      // eslint-disable-next-line no-console
       console.error("Copy failed", e);
     }
   };
 
   const headerGradient = summary.type === "weekly" ? "from-blue-600/30 to-cyan-600/30 border-blue-500/50" : "from-purple-600/30 to-pink-600/30 border-purple-500/50";
-  const fallbackStatsForPnL: any = stats ?? { totalPnL: advancedStats.totalPnL, totalPnLDisplay: undefined };
+
+  // fallbackStatsForPnL used only to feed getPnLDisplay; keep it as a Record<string, unknown>
+  const fallbackStatsForPnL = (isObject(statsUnknown) ? (statsUnknown as Record<string, unknown>) : { totalPnL: advancedStats.totalPnL, totalPnLDisplay: undefined });
   const pnlDisplay = getPnLDisplay(fallbackStatsForPnL, currencySymbol);
 
-  // narrative fallback: use summary.narrative then normalized summaryText (short)
-  const narrativeText = summary.narrative || summary.rawResponse && typeof summary.rawResponse === "string" && (() => {
-    // attempt to pull a "narrative" key from rawResponse if present
-    try {
-      const parsed = JSON.parse(summary.rawResponse);
-      return parsed.narrative || parsed.narrativeText || null;
-    } catch { return null; }
-  })() || summary.summaryText || "";
+  // narrative fallback: summary.narrative -> try parse rawResponse -> summary.summaryText
+  const narrativeText =
+    summary.narrative ||
+    (typeof summary.rawResponse === "string" &&
+      (() => {
+        try {
+          const parsed = JSON.parse(summary.rawResponse as string);
+          return (parsed && (parsed.narrative || parsed.narrativeText)) || null;
+        } catch {
+          return null;
+        }
+      })()) ||
+    summary.summaryText ||
+    "";
 
   return (
     <motion.div
@@ -84,9 +178,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                   )}
                 </div>
                 <p className="text-gray-300 text-sm sm:text-lg">
-                  {summary.dateRange
-                    ? `${formatDate((summary.dateRange as any)?.start)} - ${formatDate((summary.dateRange as any)?.end)}`
-                    : formatDateTime(summary.generatedAt ?? summary.updatedAt ?? summary.createdAt)}
+                  {summary.dateRange ? `${formatDate(summary.dateRange?.start as string)} - ${formatDate(summary.dateRange?.end as string)}` : formatDateTime(summary.generatedAt ?? summary.updatedAt ?? summary.createdAt)}
                 </p>
               </div>
             </div>
@@ -160,9 +252,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                       </div>
                       <h3 className="text-lg sm:text-2xl font-bold text-white">AI Analysis</h3>
                     </div>
-                    <p className="text-gray-300 leading-relaxed text-sm sm:text-lg">
-                      {summary.summaryText}
-                    </p>
+                    <p className="text-gray-300 leading-relaxed text-sm sm:text-lg">{summary.summaryText}</p>
                   </GlassCard>
                 )}
 
@@ -175,9 +265,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                       </div>
                       <h3 className="text-lg sm:text-2xl font-bold text-white">Narrative</h3>
                     </div>
-                    <p className="text-gray-300 leading-relaxed text-sm sm:text-lg whitespace-pre-wrap">
-                      {narrativeText}
-                    </p>
+                    <p className="text-gray-300 leading-relaxed text-sm sm:text-lg whitespace-pre-wrap">{narrativeText}</p>
                   </GlassCard>
                 )}
 
@@ -190,7 +278,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                       <h3 className="text-sm sm:text-lg font-bold text-emerald-300">Strengths</h3>
                     </div>
                     <ul className="space-y-2 text-emerald-200 text-sm">
-                      {(summary.plusPoints && summary.plusPoints.length > 0 ? summary.plusPoints : ["Consistent performance", "Strong risk management", "Excellent timing"]).map((point, idx) => (
+                      {(Array.isArray(summary.plusPoints) && summary.plusPoints.length > 0 ? summary.plusPoints : ["Consistent performance", "Strong risk management", "Excellent timing"]).map((point, idx) => (
                         <li key={idx} className="flex items-start gap-2.5">
                           <CircleDot className="h-4 w-4 mt-0.5 flex-shrink-0 text-emerald-400" />
                           <span>{point}</span>
@@ -207,7 +295,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                       <h3 className="text-sm sm:text-lg font-bold text-red-300">Areas to Improve</h3>
                     </div>
                     <ul className="space-y-2 text-red-200 text-sm">
-                      {(summary.minusPoints && summary.minusPoints.length > 0 ? summary.minusPoints : ["Risk optimization needed", "Position sizing review", "Emotional patterns"]).map((point, idx) => (
+                      {(Array.isArray(summary.minusPoints) && summary.minusPoints.length > 0 ? summary.minusPoints : ["Risk optimization needed", "Position sizing review", "Emotional patterns"]).map((point, idx) => (
                         <li key={idx} className="flex items-start gap-2.5">
                           <CircleDot className="h-4 w-4 mt-0.5 flex-shrink-0 text-red-400" />
                           <span>{point}</span>
@@ -224,7 +312,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                       <h3 className="text-sm sm:text-lg font-bold text-blue-300">AI Suggestions</h3>
                     </div>
                     <ul className="space-y-2 text-blue-200 text-sm">
-                      {(summary.aiSuggestions && summary.aiSuggestions.length > 0 ? summary.aiSuggestions : ["Diversify portfolio", "Implement trailing stops", "Review regularly"]).map((point, idx) => (
+                      {(Array.isArray(summary.aiSuggestions) && summary.aiSuggestions.length > 0 ? summary.aiSuggestions : ["Diversify portfolio", "Implement trailing stops", "Review regularly"]).map((point, idx) => (
                         <li key={idx} className="flex items-start gap-2.5">
                           <CircleDot className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-400" />
                           <span>{point}</span>
@@ -243,10 +331,14 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                         </div>
                         <h3 className="text-lg sm:text-2xl font-bold text-white">Trade Breakdown</h3>
                       </div>
-                      <Badge variant="secondary" className="bg-gray-700/50 text-gray-300">{trades.length} trades</Badge>
+                      <Badge variant="secondary" className="bg-gray-700/50 text-gray-300">
+                        {trades.length} trades
+                      </Badge>
                     </div>
                     <div className="space-y-3 max-h-80 sm:max-h-96 overflow-y-auto pr-2">
-                      {trades.map((trade, index) => <TradeCard key={trade._id || index} trade={trade} currencySymbol={currencySymbol} />)}
+                      {trades.map((trade, index) => (
+                        <TradeCard key={trade._id || index} trade={trade} currencySymbol={currencySymbol} />
+                      ))}
                     </div>
                   </GlassCard>
                 )}
@@ -275,9 +367,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                           </div>
                           <div className="flex justify-between items-center">
                             <span className="text-gray-400 text-sm">Profit</span>
-                            <span className="text-emerald-300 text-lg font-bold">
-                              {advancedStats.bestTrade.pnlDisplay ?? formatCurrency(advancedStats.bestTrade.pnl, currencySymbol)}
-                            </span>
+                            <span className="text-emerald-300 text-lg font-bold">{advancedStats.bestTrade.pnlDisplay ?? formatCurrency(advancedStats.bestTrade.pnl, currencySymbol)}</span>
                           </div>
                         </div>
                       </div>
@@ -298,9 +388,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                           </div>
                           <div className="flex justify-between items-center">
                             <span className="text-gray-400 text-sm">Loss</span>
-                            <span className="text-red-300 text-lg font-bold">
-                              {advancedStats.worstTrade.pnlDisplay ?? formatCurrency(advancedStats.worstTrade.pnl, currencySymbol)}
-                            </span>
+                            <span className="text-red-300 text-lg font-bold">{advancedStats.worstTrade.pnlDisplay ?? formatCurrency(advancedStats.worstTrade.pnl, currencySymbol)}</span>
                           </div>
                         </div>
                       </div>
@@ -324,17 +412,16 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b border-gray-700/50">
                       <span className="text-gray-400 text-sm">Sharpe Ratio</span>
-                      <span className={`font-bold ${advancedStats.sharpeRatio > 1 ? 'text-emerald-300' : advancedStats.sharpeRatio > 0 ? 'text-amber-300' : 'text-red-300'}`}>
-                        {advancedStats.sharpeRatio}
-                      </span>
+                      <span className={`font-bold ${advancedStats.sharpeRatio > 1 ? "text-emerald-300" : advancedStats.sharpeRatio > 0 ? "text-amber-300" : "text-red-300"}`}>{advancedStats.sharpeRatio}</span>
                     </div>
-                    {stats?.strategiesUsed && stats.strategiesUsed.filter((s: any) => s).length > 0 && (
+
+                    {isObject(statsUnknown) && Array.isArray((statsUnknown as Record<string, unknown>).strategiesUsed) && ((statsUnknown as Record<string, unknown>).strategiesUsed as unknown[]).filter(Boolean).length > 0 && (
                       <div>
                         <span className="text-gray-400 text-sm block mb-2">Strategies Used</span>
                         <div className="flex flex-wrap gap-2">
-                          {stats.strategiesUsed.filter((s: any) => s).map((strategy: string, idx: number) => (
+                          {(((statsUnknown as Record<string, unknown>).strategiesUsed as unknown[]) || []).filter(Boolean).map((strategy, idx) => (
                             <span key={idx} className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs font-medium border border-blue-500/30">
-                              {strategy}
+                              {String(strategy)}
                             </span>
                           ))}
                         </div>
@@ -360,10 +447,8 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                     <div className="flex justify-between items-center py-1">
                       <span className="text-gray-400 text-sm">Report ID</span>
                       <div className="flex items-center gap-2">
-                        <code className="text-xs bg-gray-800/50 text-gray-300 px-2 py-1 rounded-lg font-mono border border-gray-700/50">
-                          {id.slice(0, 8)}...
-                        </code>
-                        <Button size="sm" variant="ghost" onClick={() => copyToClipboard(id)} className="h-8 w-8 p-0 rounded-lg hover:bg-gray-700/50 border border-gray-700/50">
+                        <code className="text-xs bg-gray-800/50 text-gray-300 px-2 py-1 rounded-lg font-mono border border-gray-700/50">{String(id).slice(0, 8)}...</code>
+                        <Button size="sm" variant="ghost" onClick={() => copyToClipboard(String(id))} className="h-8 w-8 p-0 rounded-lg hover:bg-gray-700/50 border border-gray-700/50">
                           <Copy className="h-4 w-4 text-gray-400" />
                         </Button>
                       </div>
@@ -374,7 +459,7 @@ const DetailedSummaryView: React.FC<{ summary: ExtendedAISummary; onClose: () =>
                       <div className="pt-2">
                         <div className="flex items-center justify-between">
                           <div className="text-xs text-gray-400">Raw AI output</div>
-                          <button onClick={() => setShowRaw(s => !s)} className="text-xs text-gray-300 inline-flex items-center gap-1">
+                          <button onClick={() => setShowRaw((s) => !s)} className="text-xs text-gray-300 inline-flex items-center gap-1">
                             {showRaw ? "Hide" : "Show"} {showRaw ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </button>
                         </div>

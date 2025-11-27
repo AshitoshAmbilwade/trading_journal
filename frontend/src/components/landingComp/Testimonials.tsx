@@ -8,7 +8,8 @@ const testimonials = [
     name: "Rahul Sharma",
     role: "Intraday Trader, Mumbai",
     avatar: "https://images.unsplash.com/photo-1708195886023-3ecb00ac7a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=150",
-    quote: "Zerodha auto-sync is a game changer! All my trades appear automatically. Backtesting showed me my best setups—win rate jumped from 52% to 71%.",
+    quote:
+      "Zerodha auto-sync is a game changer! All my trades appear automatically. Backtesting showed me my best setups—win rate jumped from 52% to 71%.",
     rating: 5,
     stat: "+19% Win Rate",
   },
@@ -16,7 +17,8 @@ const testimonials = [
     name: "Priya Kapoor",
     role: "Options Trader, Delhi",
     avatar: "https://images.unsplash.com/photo-1708195886023-3ecb00ac7a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=150",
-    quote: "Connected my Upstox account in 2 minutes. Every trade syncs daily. No more Excel sheets! The ITR report saved me during tax season.",
+    quote:
+      "Connected my Upstox account in 2 minutes. Every trade syncs daily. No more Excel sheets! The ITR report saved me during tax season.",
     rating: 5,
     stat: "Zero manual entry",
   },
@@ -24,7 +26,8 @@ const testimonials = [
     name: "Arjun Patel",
     role: "Swing Trader, Ahmedabad",
     avatar: "https://images.unsplash.com/photo-1708195886023-3ecb00ac7a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=150",
-    quote: "Backtesting feature is incredible! Tested my strategy on 2 years of data before going live. Saved me from costly mistakes.",
+    quote:
+      "Backtesting feature is incredible! Tested my strategy on 2 years of data before going live. Saved me from costly mistakes.",
     rating: 5,
     stat: "₹1.2L saved",
   },
@@ -32,7 +35,8 @@ const testimonials = [
     name: "Sneha Reddy",
     role: "F&O Trader, Bangalore",
     avatar: "https://images.unsplash.com/photo-1708195886023-3ecb00ac7a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=150",
-    quote: "The AI analyzed my Dhan trades and found I lose money when I revenge trade. That one insight alone made this worth it!",
+    quote:
+      "The AI analyzed my Dhan trades and found I lose money when I revenge trade. That one insight alone made this worth it!",
     rating: 5,
     stat: "+₹58K monthly",
   },
@@ -40,7 +44,8 @@ const testimonials = [
     name: "Vikram Singh",
     role: "Day Trader, Jaipur",
     avatar: "https://images.unsplash.com/photo-1708195886023-3ecb00ac7a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=150",
-    quote: "Best ₹499 I've spent. Auto-sync from Angel One works flawlessly. I just trade and review—no data entry BS.",
+    quote:
+      "Best ₹499 I've spent. Auto-sync from Angel One works flawlessly. I just trade and review—no data entry BS.",
     rating: 5,
     stat: "Daily user for 8m",
   },
@@ -48,7 +53,8 @@ const testimonials = [
     name: "Meera Joshi",
     role: "Positional Trader, Pune",
     avatar: "https://images.unsplash.com/photo-1708195886023-3ecb00ac7a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=150",
-    quote: "The analytics dashboard shows exactly where I'm profitable. Love that all my Groww trades sync automatically!",
+    quote:
+      "The analytics dashboard shows exactly where I'm profitable. Love that all my Groww trades sync automatically!",
     rating: 5,
     stat: "3.2x profit factor",
   },
@@ -56,7 +62,10 @@ const testimonials = [
 
 export function Testimonials() {
   return (
-    <section id="testimonials" className="px-4 sm:px-6 py-16 sm:py-20 lg:py-28 bg-gradient-to-b from-background via-secondary/10 to-background relative overflow-hidden">
+    <section
+      id="testimonials"
+      className="px-4 sm:px-6 py-16 sm:py-20 lg:py-28 bg-gradient-to-b from-background via-secondary/10 to-background relative overflow-hidden"
+    >
       {/* Background decoration */}
       <div className="absolute inset-0 -z-10">
         <div className="absolute top-0 right-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl"></div>
@@ -76,9 +85,7 @@ export function Testimonials() {
             <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
             <span className="text-sm text-yellow-500">8,500+ Happy Traders</span>
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl">
-            Trusted by Indian Traders
-          </h2>
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl">Trusted by Indian Traders</h2>
           <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto">
             Join thousands of Indian traders who auto-sync trades and backtest strategies daily
           </p>
@@ -113,17 +120,13 @@ export function Testimonials() {
 
                   {/* Quote */}
                   <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                    "{testimonial.quote}"
+                    &ldquo;{testimonial.quote}&rdquo;
                   </p>
 
                   {/* Author */}
                   <div className="flex items-center gap-3 pt-2 border-t border-border">
                     <div className="h-12 w-12 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 overflow-hidden ring-2 ring-primary/20 group-hover:ring-primary/40 transition-all">
-                      <img
-                        src={testimonial.avatar}
-                        alt={testimonial.name}
-                        className="h-full w-full object-cover"
-                      />
+                      <img src={testimonial.avatar} alt={testimonial.name} className="h-full w-full object-cover" />
                     </div>
                     <div>
                       <p className="text-sm sm:text-base">{testimonial.name}</p>

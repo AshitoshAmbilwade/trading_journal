@@ -22,6 +22,18 @@ interface User {
   tier?: string;
 }
 
+/** Narrow guard for API response shape: { user?: User } */
+function hasUser(obj: unknown): obj is { user?: User } {
+  return typeof obj === "object" && obj !== null && "user" in (obj as Record<string, unknown>);
+}
+
+/** Detect structured unauthorized sentinel from apiHandler */
+function isUnauthorizedError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const r = err as Record<string, unknown>;
+  return r["unauthorized"] === true;
+}
+
 export function AppLayout({ children }: AppLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -41,16 +53,16 @@ export function AppLayout({ children }: AppLayoutProps) {
       setLoadingUser(true);
       try {
         const res = await authApi.getMe();
-        const u = res && (res as any).user ? (res as any).user : null;
+        const u = hasUser(res) && res.user ? res.user : null;
         if (isDev)
           console.debug(
             "[AppLayout] fetched user (masked):",
             u ? { name: u.name, tier: u.tier } : null
           );
         if (mounted) setUser(u);
-      } catch (err: any) {
+      } catch (err: unknown) {
         // handle structured unauthorized sentinel from apiHandler
-        if (err?.unauthorized) {
+        if (isUnauthorizedError(err)) {
           // No token / invalid token — silent and expected.
           if (mounted) setUser(null);
         } else {
@@ -81,7 +93,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     try {
       // replace prevents an extra history entry
       window.location.replace("/");
-    } catch (err) {
+    } catch {
       // last resort
       window.location.href = "/";
     }
@@ -99,7 +111,9 @@ export function AppLayout({ children }: AppLayoutProps) {
       // also broadcast a storage event so other tabs react
       try {
         // some browsers won't allow constructing StorageEvent directly; guard it
-        const ev = new StorageEvent("storage", { key: "token", newValue: null as any });
+        // StorageEvent requires string args; use an init object where newValue is a string or null is cast safely
+        const evInit: StorageEventInit = { key: "token", newValue: null };
+        const ev = new StorageEvent("storage", evInit);
         window.dispatchEvent(ev);
       } catch {
         // fallback: set and remove a dummy key
@@ -117,8 +131,8 @@ export function AppLayout({ children }: AppLayoutProps) {
       // First try SPA navigation (keeps Router state consistent)
       try {
         navigate("/");
-      } catch (err) {
-        if (isDev) console.debug("[AppLayout] navigate('/') threw:", err);
+      } catch (navErr) {
+        if (isDev) console.debug("[AppLayout] navigate('/') threw:", navErr);
       }
 
       // If SPA somehow doesn't unmount dashboard or still shows protected UI,
@@ -126,6 +140,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       // Use a small timeout to let SPA navigate() run first.
       setTimeout(() => performHardRedirectToLanding(), 100);
     } catch (err) {
+      // top-level logout error
       console.error("Logout failed:", err);
       toast({
         title: "Logout failed",

@@ -1,7 +1,7 @@
-// app/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { LandingPage } from "./landing/landingPage";
 import { authApi } from "@/api/auth";
 import { toast } from "@/components/ui/use-toast";
@@ -13,8 +13,14 @@ import { toast } from "@/components/ui/use-toast";
  * - If no token or validation fails, show LandingPage.
  */
 
+type AuthMeResponse = {
+  user?: { [k: string]: unknown } | null;
+  [k: string]: unknown;
+};
+
 export default function Home() {
   const [state, setState] = useState<"checking" | "landing">("checking");
+  const router = useRouter();
 
   useEffect(() => {
     let mounted = true;
@@ -42,42 +48,40 @@ export default function Home() {
           });
         } catch {}
 
-        const res = await authApi.getMe(); // must reject on invalid
+        const res = (await authApi.getMe()) as AuthMeResponse;
         // If res is truthy and indicates user, consider it valid
-        const ok = !!(res && (res as any).user);
+        const ok = !!(res && res.user);
 
         if (ok) {
-          // SPA navigate if possible, else hard replace
+          // Use next/router replace for SPA navigation (keeps history tidy)
           try {
-            // try to use Router.navigate if available (keeps history tidy)
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const router = require("@/utils/routes")?.useRouter?.();
-            const navigate = router && (router as any).navigate;
-            if (typeof navigate === "function") {
-              navigate("/dashboard");
-            } else {
-              window.location.replace("/dashboard");
-            }
-            return; // don't set landing
-          } catch (err) {
+            router.replace("/dashboard");
+          } catch {
+            // fallback to hard replace
             window.location.replace("/dashboard");
-            return;
           }
+          return; // don't set landing
         } else {
           // invalid -> clear token and go landing
-          try { localStorage.removeItem("token"); } catch {}
+          try {
+            localStorage.removeItem("token");
+          } catch {}
           if (mounted) setState("landing");
         }
       } catch (err) {
         // validation failed -> clear token and show landing
-        try { localStorage.removeItem("token"); } catch {}
+        try {
+          localStorage.removeItem("token");
+        } catch {}
         if (mounted) setState("landing");
       }
     };
 
     run();
-    return () => { mounted = false; };
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
 
   if (state === "checking") {
     return (

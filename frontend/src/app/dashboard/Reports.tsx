@@ -3,15 +3,22 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Calendar, Clock, FileText, RefreshCw, Eye, Copy, X, Sparkles, BarChart3, TrendingUp,
-  Activity, Search, Download
+  Calendar,
+  Clock,
+  FileText,
+  RefreshCw,
+  Sparkles,
+  BarChart3,
+  TrendingUp,
+  Activity,
+  Search,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import GenerateAISummaryButton from "@/components/dashboard/GenerateAISummaryButton";
-import { aiSummariesApi } from "@/api/aiSummaries";
+import { aiSummariesApi, AISummaryListResponse } from "@/api/aiSummaries";
 import SummaryCard from "@/components/reports/SummaryCard";
 import DetailedSummaryView from "@/components/reports/DetailedSummaryView";
 import GlassCard from "@/components/reports/GlassCard";
@@ -30,8 +37,9 @@ const Reports: React.FC = () => {
   const loadSummaries = useCallback(async () => {
     try {
       setLoading(true);
-      const resp = await aiSummariesApi.list();
-      const items = (resp && (resp as any).summaries) ? (resp as any).summaries : (resp as any);
+      const resp: AISummaryListResponse = await aiSummariesApi.list();
+      // aiSummariesApi.list() returns { summaries: AISummary[] }
+      const items = Array.isArray(resp?.summaries) ? resp.summaries : [];
       setSummaries((items || []) as ExtendedAISummary[]);
     } catch (err) {
       console.error("Error loading AI summaries:", err);
@@ -59,8 +67,9 @@ const Reports: React.FC = () => {
     console.error("AI generation error:", errMsg);
   };
 
-  const filteredSummaries = summaries.filter(summary => {
-    const matchesSearch = searchTerm === "" ||
+  const filteredSummaries = summaries.filter((summary) => {
+    const matchesSearch =
+      searchTerm === "" ||
       summary.summaryText?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       summary.type?.toLowerCase().includes(searchTerm.toLowerCase());
 

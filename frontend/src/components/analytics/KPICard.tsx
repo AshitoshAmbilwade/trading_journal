@@ -9,8 +9,8 @@ import { Skeleton } from "../ui/skeleton";
 interface KPICardProps {
   title: string;
   value: number | string;
-  // Accept a React component (Lucide icons are components)
-  icon: React.ComponentType<any>;
+  // Lucide icons are SVG components that accept standard SVG props
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   gradient: string;
   prefix?: string;
   suffix?: string;
@@ -30,7 +30,7 @@ export function KPICard({
 }: KPICardProps) {
   const formattedValue =
     typeof value === "number"
-      ? value % 1 === 0
+      ? Number.isInteger(value)
         ? value.toLocaleString()
         : value.toFixed(2)
       : String(value);
@@ -70,9 +70,7 @@ export function KPICard({
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
                       className={`flex items-center gap-0.5 text-sm px-2 py-0.5 rounded-full ${
-                        trend === "up"
-                          ? "bg-green-500/10 text-green-500"
-                          : "bg-red-500/10 text-red-500"
+                        trend === "up" ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
                       }`}
                     >
                       {trend === "up" ? (

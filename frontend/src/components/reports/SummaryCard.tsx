@@ -1,4 +1,3 @@
-// src/components/reports/SummaryCard.tsx
 import React from "react";
 import { motion } from "motion/react";
 import { Calendar, Clock, Eye, ArrowUpRight, Star } from "lucide-react";
@@ -10,19 +9,17 @@ import { calculateAdvancedStats, getPnLDisplay, formatDate } from "./utils";
 const SummaryCard: React.FC<{ summary: ExtendedAISummary; onExpand: () => void }> = ({ summary, onExpand }) => {
   const stats = summary.weeklyStats ?? summary.inputSnapshot?.weeklyStats;
   const trades = summary.inputSnapshot?.tradesSample || summary.snapshot?.tradesSample || summary.trades || [];
-  const advancedStats = calculateAdvancedStats(trades, stats);
+  const advancedStats = calculateAdvancedStats(trades, (stats as Record<string, unknown>) ?? undefined);
 
-  const pnlNumberForCard = Number(stats?.totalPnL ?? advancedStats.totalPnL);
+  const pnlNumberForCard = Number((stats as Record<string, unknown> | undefined)?.totalPnL ?? advancedStats.totalPnL);
   const isPositive = !Number.isNaN(pnlNumberForCard) && pnlNumberForCard > 0;
 
   const currencySymbol = summary.inputSnapshot?.currencySymbol ?? "₹";
   const winRate = Math.round(advancedStats.winRate);
 
-  const cardGradient = summary.type === "weekly"
-    ? "from-blue-500/20 to-cyan-500/20 border-blue-500/30"
-    : "from-purple-500/20 to-pink-500/20 border-purple-500/30";
+  const cardGradient = summary.type === "weekly" ? "from-blue-500/20 to-cyan-500/20 border-blue-500/30" : "from-purple-500/20 to-pink-500/20 border-purple-500/30";
 
-  const fallbackStatsForPnL: any = stats ?? { totalPnL: advancedStats.totalPnL, totalPnLDisplay: undefined };
+  const fallbackStatsForPnL = (stats as Record<string, unknown>) ?? { totalPnL: advancedStats.totalPnL, totalPnLDisplay: undefined } as Record<string, unknown>;
   const pnlDisplay = getPnLDisplay(fallbackStatsForPnL, currencySymbol);
 
   return (
@@ -49,9 +46,7 @@ const SummaryCard: React.FC<{ summary: ExtendedAISummary; onExpand: () => void }
                   {summary.type || "analysis"}
                   {winRate > 70 && <Star className="h-4 w-4 text-amber-400 fill-amber-400/20" />}
                 </h3>
-                <p className="text-gray-400 text-xs">
-                  {formatDate(summary.generatedAt ?? summary.createdAt)}
-                </p>
+                <p className="text-gray-400 text-xs">{formatDate(summary.generatedAt ?? summary.createdAt)}</p>
               </div>
             </div>
             <StatusBadge status={summary.status} />
@@ -60,23 +55,17 @@ const SummaryCard: React.FC<{ summary: ExtendedAISummary; onExpand: () => void }
           <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="bg-gray-800/50 rounded-xl p-2 sm:p-3 text-center backdrop-blur-sm border border-gray-700/50">
               <div className="text-gray-400 text-[10px] mb-1 uppercase font-semibold">P&L</div>
-              <div className={`text-sm font-bold ${isPositive ? "text-emerald-300" : "text-red-300"}`}>
-                {pnlDisplay}
-              </div>
+              <div className={`text-sm font-bold ${isPositive ? "text-emerald-300" : "text-red-300"}`}>{pnlDisplay}</div>
             </div>
 
             <div className="bg-gray-800/50 rounded-xl p-2 sm:p-3 text-center backdrop-blur-sm border border-gray-700/50">
               <div className="text-gray-400 text-[10px] mb-1 uppercase font-semibold">Win Rate</div>
-              <div className={`text-sm font-bold ${winRate >= 70 ? "text-emerald-300" : winRate >= 50 ? "text-amber-300" : "text-red-300"}`}>
-                {winRate}%
-              </div>
+              <div className={`text-sm font-bold ${winRate >= 70 ? "text-emerald-300" : winRate >= 50 ? "text-amber-300" : "text-red-300"}`}>{winRate}%</div>
             </div>
 
             <div className="bg-gray-800/50 rounded-xl p-2 sm:p-3 text-center backdrop-blur-sm border border-gray-700/50">
               <div className="text-gray-400 text-[10px] mb-1 uppercase font-semibold">Trades</div>
-              <div className="text-sm font-bold text-white">
-                {advancedStats.totalTrades}
-              </div>
+              <div className="text-sm font-bold text-white">{advancedStats.totalTrades}</div>
             </div>
           </div>
 
@@ -86,11 +75,7 @@ const SummaryCard: React.FC<{ summary: ExtendedAISummary; onExpand: () => void }
             <span>Vol: {advancedStats.volatility ?? "-"}</span>
           </div>
 
-          {summary.summaryText && (
-            <p className="text-gray-300 text-sm line-clamp-2 mb-3 leading-relaxed">
-              {summary.summaryText}
-            </p>
-          )}
+          {summary.summaryText && <p className="text-gray-300 text-sm line-clamp-2 mb-3 leading-relaxed">{summary.summaryText}</p>}
 
           <div className="flex items-center justify-between pt-3 border-t border-gray-700/50">
             <div className="flex items-center gap-2 text-gray-400 text-sm group-hover:text-blue-400 transition-colors">

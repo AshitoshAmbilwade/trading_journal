@@ -34,60 +34,97 @@ interface TradeTypeDist {
 
 interface Props {
   loading?: boolean;
-  filters?: any;
+  // Generic filters object; the analytics API expects keys like { from, to }
+  filters?: Record<string, unknown>;
 }
 
 const TRADE_TYPES = ["intraday", "positional", "investment", "swing", "scalping"];
+
+/** runtime check helpers */
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object";
+const toNumber = (v: unknown) => {
+  const n = Number(v as unknown);
+  return Number.isFinite(n) ? n : 0;
+};
 
 export function PnLDistribution({ loading = false, filters = {} }: Props) {
   const [data, setData] = useState<TradeTypeDist[]>([]);
   const [fetching, setFetching] = useState<boolean>(false);
 
+  // avoid complex expression in deps — memoize serialized filters
+  const serializedFilters = useMemo(() => JSON.stringify(filters ?? {}), [filters]);
+
   useEffect(() => {
+    let mounted = true;
     const load = async () => {
       setFetching(true);
       try {
         const res = await analyticsApi.getDistribution("tradeType", filters);
         if (Array.isArray(res)) {
-          // Normalize: ensure tradeTypes always ordered consistently
-          const map = new Map(res.map((r: any) => [r._id ?? "unknown", r]));
+          // Normalize response items and coerce types safely
+          const normalizedIncoming: TradeTypeDist[] = (res as unknown[]).map((r) => {
+            if (isRecord(r)) {
+              return {
+                _id: String(r._id ?? "unknown"),
+                count: toNumber(r.count),
+                totalPnl: toNumber(r.totalPnl),
+                avgPnl: toNumber(r.avgPnl),
+                winRate: toNumber(r.winRate),
+              };
+            }
+            return { _id: "unknown", count: 0, totalPnl: 0, avgPnl: 0, winRate: 0 };
+          });
+
+          // Ensure consistent ordering & default entries for missing types
+          const map = new Map<string, TradeTypeDist>();
+          normalizedIncoming.forEach((r) => map.set(r._id, r));
           const normalized = TRADE_TYPES.map((type) =>
-            map.get(type) || { _id: type, count: 0, totalPnl: 0, avgPnl: 0, winRate: 0 }
+            map.get(type) ?? { _id: type, count: 0, totalPnl: 0, avgPnl: 0, winRate: 0 }
           );
-          setData(normalized);
+
+          if (mounted) setData(normalized);
         } else {
-          setData([]);
+          if (mounted) setData([]);
         }
       } catch (err) {
+        // keep error log for debugging but don't throw
+        // eslint-disable-next-line no-console
         console.error("PnLDistribution error:", err);
-        setData([]);
+        if (mounted) setData([]);
       } finally {
-        setFetching(false);
+        if (mounted) setFetching(false);
       }
     };
-    load();
-  }, [JSON.stringify(filters)]);
 
-  const chartData = useMemo(() => {
-    return data.map((item) => ({
-      tradeType: item._id,
-      count: item.count,
-      totalPnl: item.totalPnl,
-      avgPnl: item.avgPnl,
-      winRate: item.winRate,
-    }));
-  }, [data]);
+    load();
+    return () => {
+      mounted = false;
+    };
+    // only depends on serializedFilters to avoid complex dependency arrays
+  }, [serializedFilters]);
+
+  const chartData = useMemo(
+    () =>
+      data.map((item) => ({
+        tradeType: item._id,
+        count: item.count,
+        totalPnl: item.totalPnl,
+        avgPnl: item.avgPnl,
+        winRate: item.winRate,
+      })),
+    [data]
+  );
 
   const totalTrades = chartData.reduce((sum, d) => sum + (d.count ?? 0), 0);
   const overallWinRate =
     totalTrades > 0
-      ? (chartData.reduce((s, d) => s + (d.winRate * d.count) / 100, 0) / totalTrades) * 100
+      ? (chartData.reduce((s, d) => s + (d.winRate * (d.count ?? 0)) / 100, 0) / totalTrades) * 100
       : 0;
 
-  const topTradeType = chartData.reduce(
-    (max, d) => (d.count > max.count ? d : max),
-    chartData[0] || { tradeType: "none", count: 0 }
-  );
+  const topTradeType =
+    chartData.length > 0
+      ? chartData.reduce((max, d) => (d.count > (max.count ?? 0) ? d : max), chartData[0])
+      : null;
 
   const coloredData = chartData.map((item) => {
     let color = "#71717A"; // neutral gray
@@ -98,16 +135,27 @@ export function PnLDistribution({ loading = false, filters = {} }: Props) {
 
   const isLoading = loading || fetching;
 
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (!active || !payload?.length) return null;
-    const p = payload[0].payload;
+  type TooltipPayload = { payload?: Record<string, unknown>[]; active?: boolean };
+
+  const CustomTooltip: React.FC<TooltipPayload> = ({ active, payload }) => {
+    if (!active || !Array.isArray(payload) || !payload.length) return null;
+    const p0 = payload[0];
+    const p = p0?.payload;
+    if (!isRecord(p)) return null;
+
+    const tradeType = String(p.tradeType ?? "unknown");
+    const count = toNumber(p.count);
+    const winRate = toNumber(p.winRate);
+    const totalPnl = toNumber(p.totalPnl);
+    const avgPnl = toNumber(p.avgPnl);
+
     return (
       <div className="bg-black/90 text-white p-3 rounded-md text-xs shadow-md border border-white/10">
-        <div className="font-semibold mb-1">{p.tradeType}</div>
-        <div>Total Trades: {p.count}</div>
-        <div>Win Rate: {p.winRate.toFixed(1)}%</div>
-        <div>Total P/L: ₹{p.totalPnl.toFixed(2)}</div>
-        <div>Avg P/L: ₹{p.avgPnl.toFixed(2)}</div>
+        <div className="font-semibold mb-1">{tradeType}</div>
+        <div>Total Trades: {count}</div>
+        <div>Win Rate: {winRate.toFixed(1)}%</div>
+        <div>Total P/L: ₹{totalPnl.toFixed(2)}</div>
+        <div>Avg P/L: ₹{avgPnl.toFixed(2)}</div>
       </div>
     );
   };
@@ -142,9 +190,7 @@ export function PnLDistribution({ loading = false, filters = {} }: Props) {
               <Skeleton className="h-5 w-16" />
             ) : (
               <>
-                <div className="text-sm text-muted-foreground">
-                  {totalTrades} Trades
-                </div>
+                <div className="text-sm text-muted-foreground">{totalTrades} Trades</div>
                 <Badge
                   className={`mt-1 ${
                     overallWinRate >= 50
@@ -170,22 +216,10 @@ export function PnLDistribution({ loading = false, filters = {} }: Props) {
           <>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={coloredData}
-                  margin={{ top: 20, right: 20, left: 10, bottom: 30 }}
-                  barCategoryGap="25%"
-                >
+                <BarChart data={coloredData} margin={{ top: 20, right: 20, left: 10, bottom: 30 }} barCategoryGap="25%">
                   <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-                  <XAxis
-                    dataKey="tradeType"
-                    tick={{ fill: "#aaa", fontSize: 12 }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: "#aaa", fontSize: 12 }}
-                    tickLine={false}
-                    allowDecimals={false}
-                  />
+                  <XAxis dataKey="tradeType" tick={{ fill: "#aaa", fontSize: 12 }} tickLine={false} />
+                  <YAxis tick={{ fill: "#aaa", fontSize: 12 }} tickLine={false} allowDecimals={false} />
                   <ReTooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
                   <Bar dataKey="count" radius={[6, 6, 0, 0]}>
                     {coloredData.map((entry, i) => (
@@ -202,10 +236,7 @@ export function PnLDistribution({ loading = false, filters = {} }: Props) {
                 <Trophy className="h-4 w-4 text-yellow-500" />
                 <span>
                   Most trades in{" "}
-                  <strong className="text-foreground">
-                    {topTradeType.tradeType}
-                  </strong>{" "}
-                  ({topTradeType.count} trades)
+                  <strong className="text-foreground">{topTradeType.tradeType}</strong> ({topTradeType.count} trades)
                 </span>
               </div>
             )}
