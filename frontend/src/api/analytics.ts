@@ -62,6 +62,13 @@ export interface Trade {
 }
 
 /* --------------------- Filters --------------------- */
+/**
+ * IMPORTANT: add an index signature so AnalyticsFilters is assignment-compatible
+ * with Record<string, unknown> (fetchApi expects that).
+ *
+ * This keeps your explicit filter fields for autocompletion while allowing
+ * the object to be passed directly to `fetchApi(..., params: Record<string, unknown>)`.
+ */
 export interface AnalyticsFilters {
   from?: string;
   to?: string;
@@ -76,6 +83,9 @@ export interface AnalyticsFilters {
   by?: string;
   limit?: number;
   skip?: number;
+
+  // INDEX SIGNATURE added so this type is compatible with Record<string, unknown>
+  [key: string]: unknown;
 }
 
 /* --------------------- API wrapper --------------------- */
