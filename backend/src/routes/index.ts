@@ -7,6 +7,8 @@ import gamificationRoutes from "./gamificationRoutes.js";
 import analyticsRoutes from "./analytics.js"; 
 import strategyRoutes from "./strategyRoutes.js";
 import importCsvRoutes from "./importCsv.js";
+import paymentsRoutes from "./payments.js";
+import webhooksRoutes from "./webhooks.js";
 
 const router = Router();
 
@@ -24,5 +26,8 @@ router.use("/gamification", gamificationRoutes);
 router.use("/analytics", analyticsRoutes); 
 router.use("/strategies", strategyRoutes);
 router.use("/import", importCsvRoutes);
+
+router.use("/payments", paymentsRoutes);
+router.use("/webhooks", webhooksRoutes);
 
 export default router;
