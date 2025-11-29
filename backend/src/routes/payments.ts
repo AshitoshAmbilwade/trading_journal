@@ -1,16 +1,56 @@
 // src/routes/payments.ts
 import express, { Request, Response, NextFunction } from "express";
 import asyncHandler from "express-async-handler";
+import jwt from "jsonwebtoken";
 import { razorpay } from "../utils/razorpay.js";
 import { UserModel } from "../models/User.js";
 
 const router = express.Router();
 const toPaise = (rupees: number) => Math.round(rupees * 100);
 
+interface AuthedRequest extends Request {
+  user?: any;
+}
+
+interface JwtPayload {
+  id?: string;
+  userId?: string;
+  _id?: string;
+  [key: string]: any;
+}
+
+// Helper to extract userId from req.user OR Authorization header
+function getUserIdFromRequest(req: AuthedRequest): string | null {
+  // 1) If some auth middleware already set req.user
+  if (req.user?.id || req.user?._id) {
+    return String(req.user.id || req.user._id);
+  }
+
+  // 2) Fallback: read JWT from Authorization header
+  const authHeader = (req.headers.authorization || req.headers.Authorization) as string | undefined;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+
+  const token = authHeader.split(" ")[1];
+  if (!token) return null;
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
+    const userId = decoded.id || decoded.userId || decoded._id;
+    return userId ? String(userId) : null;
+  } catch (err) {
+    console.error("create-subscription: JWT verify error:", err);
+    return null;
+  }
+}
+
+// POST /api/payments/create-subscription
 router.post(
   "/create-subscription",
-  asyncHandler(async (req: Request & { user?: any }, res: Response, next: NextFunction): Promise<void> => {
-    const userId = req.user?.id;
+  asyncHandler(async (req: AuthedRequest, res: Response, _next: NextFunction): Promise<void> => {
+    const userId = getUserIdFromRequest(req);
+
     if (!userId) {
       res.status(401).json({ ok: false, error: "Unauthorized" });
       return;
@@ -26,7 +66,10 @@ router.post(
     // avoid creating multiple subscriptions accidentally
     const existingSubId = user.subscription?.razorpaySubscriptionId;
     const existingStatus = user.subscription?.status;
-    if (existingSubId && (existingStatus === "inactive" || existingStatus === "active" || existingStatus === "trial")) {
+    if (
+      existingSubId &&
+      (existingStatus === "inactive" || existingStatus === "active" || existingStatus === "trial")
+    ) {
       // if already active or pending, return existing subscription id to frontend
       res.json({ ok: true, subscription: { id: existingSubId, note: "existing" } });
       return;
@@ -38,7 +81,6 @@ router.post(
     const totalAmount = +(baseAmount * (1 + gstPercent / 100)).toFixed(2); // 590
 
     try {
-      // Option: create a Plan in Razorpay dashboard and use plan_id here for cleaner behavior
       // For now create subscription directly using 'amount'
       const options: any = {
         amount: toPaise(totalAmount),
@@ -51,7 +93,7 @@ router.post(
 
       const subscription = await razorpay.subscriptions.create(options);
 
-      // store only minimal raw data
+      // store only minimal data
       user.subscription = {
         status: "inactive",
         billingProvider: "razorpay",
