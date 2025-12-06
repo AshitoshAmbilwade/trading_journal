@@ -1,9 +1,24 @@
 // src/models/User.ts
-import { Schema, model, Types, Document } from "mongoose";
+import { Schema, model, Document } from "mongoose";
 
 export type Tier = "Free" | "Premium" | "UltraPremium";
 export type SubscriptionStatus = "inactive" | "trial" | "active" | "past_due" | "cancelled";
 export type BillingProvider = "razorpay" | "stripe" | "manual";
+
+export interface SubscriptionPlan {
+  name: string;
+  baseAmount: number;
+  gstPercent: number;
+  totalAmount: number;
+  currency: string;
+}
+
+export interface SubscriptionMeta {
+  // we use this for Razorpay flow
+  pendingPlanKey?: string; // "prime_monthly" | "prime_annual" | "ultraprime_monthly" | "ultraprime_annual"
+  lastInvoice?: string | null;
+  [key: string]: any;
+}
 
 export interface IUser {
   name: string;
@@ -21,17 +36,11 @@ export interface IUser {
     billingProvider?: BillingProvider;
     razorpaySubscriptionId?: string | null;
     razorpayPaymentIds?: string[];
-    plan?: {
-      name: string;
-      baseAmount: number;
-      gstPercent: number;
-      totalAmount: number;
-      currency: string;
-    };
+    plan?: SubscriptionPlan;
     currentPeriodEnd?: Date | null;
     trialEndsAt?: Date | null;
     createdAt?: Date;
-    metadata?: Record<string, any>;
+    metadata?: SubscriptionMeta;
   };
 
   timezone?: string | null;
@@ -69,12 +78,18 @@ const SubscriptionSchema = new Schema(
       enum: ["razorpay", "stripe", "manual"],
       default: "razorpay",
     },
-    razorpaySubscriptionId: { type: String, index: true, sparse: true },
+
+    // ❗️IMPORTANT: removed `index: true` + `sparse: true` to avoid duplicate index warning.
+    // We define the index once on UserSchema below.
+    razorpaySubscriptionId: { type: String },
+
     razorpayPaymentIds: [{ type: String }],
     plan: { type: SubscriptionPlanSchema },
     currentPeriodEnd: { type: Date, default: null },
     trialEndsAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now },
+
+    // can store pendingPlanKey, lastInvoice, etc.
     metadata: { type: Schema.Types.Mixed },
   },
   { _id: false }
@@ -103,7 +118,7 @@ const UserSchema = new Schema<IUserDocument>(
     subscriptionStart: { type: Date, default: null },
     subscriptionEnd: { type: Date, default: null },
 
-    // FIXED: subscription default must not be null
+    // subscription default must not be null
     subscription: {
       type: SubscriptionSchema,
       default: {
@@ -111,6 +126,7 @@ const UserSchema = new Schema<IUserDocument>(
         billingProvider: "razorpay",
         razorpayPaymentIds: [],
         createdAt: new Date(),
+        metadata: {},
       },
     },
 
@@ -123,6 +139,11 @@ const UserSchema = new Schema<IUserDocument>(
 
 // Indexes
 UserSchema.index({ tier: 1 });
-UserSchema.index({ "subscription.razorpaySubscriptionId": 1 }, { sparse: true });
+
+// single canonical index for subscription id (no duplicate)
+UserSchema.index(
+  { "subscription.razorpaySubscriptionId": 1 },
+  { sparse: true }
+);
 
 export const UserModel = model<IUserDocument>("User", UserSchema);
