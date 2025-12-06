@@ -1,9 +1,11 @@
 // src/utils/apiHandler.ts
 import axios from "axios";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api`
-  : "http://localhost:5000/api"; 
+  : "http://localhost:5000/api";  
+
+  //const API_BASE =  "http://localhost:5000/api";
 /**
  * 
  * Minimal local typings for the shapes we use.

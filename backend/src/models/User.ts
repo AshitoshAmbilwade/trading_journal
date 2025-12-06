@@ -10,60 +10,65 @@ export interface IUser {
   email: string;
   password: string;
   number?: string;
+
   tier: Tier;
-  // legacy (you already had)
+
   subscriptionStart?: Date | null;
   subscriptionEnd?: Date | null;
 
-  // single embedded subscription document (preferred for billing)
   subscription?: {
     status: SubscriptionStatus;
     billingProvider?: BillingProvider;
     razorpaySubscriptionId?: string | null;
-    // push all successful payment ids here (razorpay_payment_id)
     razorpayPaymentIds?: string[];
-    // plan breakdown stored here for accounting; amounts in rupees (not paise)
     plan?: {
       name: string;
-      baseAmount: number; // e.g. 500 (rupees)
-      gstPercent: number; // e.g. 18
-      totalAmount: number; // e.g. 590 (rupees) — base + GST
-      currency: string; // e.g. "INR"
+      baseAmount: number;
+      gstPercent: number;
+      totalAmount: number;
+      currency: string;
     };
-    currentPeriodEnd?: Date | null; // when the paid period ends
+    currentPeriodEnd?: Date | null;
     trialEndsAt?: Date | null;
     createdAt?: Date;
     metadata?: Record<string, any>;
   };
 
-  // user preferences
-  timezone?: string | null; // IANA timezone
-  currency?: string; // user's preferred currency code e.g. "INR"
+  timezone?: string | null;
+  currency?: string;
 
-  // broker accounts (unchanged)
   brokerAccounts?: { type: string; brokerId: string; token: string }[];
-
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export interface IUserDocument extends IUser, Document {}
 
+// ---- Plan Subschema ----
 const SubscriptionPlanSchema = new Schema(
   {
     name: { type: String },
-    baseAmount: { type: Number }, // rupees
+    baseAmount: { type: Number },
     gstPercent: { type: Number },
-    totalAmount: { type: Number }, // rupees
+    totalAmount: { type: Number },
     currency: { type: String, default: "INR" },
   },
   { _id: false }
 );
 
+// ---- Subscription Subschema ----
 const SubscriptionSchema = new Schema(
   {
-    status: { type: String, enum: ["inactive", "trial", "active", "past_due", "cancelled"], default: "inactive" },
-    billingProvider: { type: String, enum: ["razorpay", "stripe", "manual"], default: "razorpay" },
+    status: {
+      type: String,
+      enum: ["inactive", "trial", "active", "past_due", "cancelled"],
+      default: "inactive",
+    },
+    billingProvider: {
+      type: String,
+      enum: ["razorpay", "stripe", "manual"],
+      default: "razorpay",
+    },
     razorpaySubscriptionId: { type: String, index: true, sparse: true },
     razorpayPaymentIds: [{ type: String }],
     plan: { type: SubscriptionPlanSchema },
@@ -75,6 +80,7 @@ const SubscriptionSchema = new Schema(
   { _id: false }
 );
 
+// ---- Broker Subschema ----
 const BrokerAccountSchema = new Schema(
   {
     type: { type: String },
@@ -84,16 +90,30 @@ const BrokerAccountSchema = new Schema(
   { _id: false }
 );
 
+// ---- User Schema ----
 const UserSchema = new Schema<IUserDocument>(
   {
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, index: true },
     password: { type: String, required: true },
     number: { type: String },
+
     tier: { type: String, enum: ["Free", "Premium", "UltraPremium"], default: "Free" },
+
     subscriptionStart: { type: Date, default: null },
     subscriptionEnd: { type: Date, default: null },
-    subscription: { type: SubscriptionSchema, default: null },
+
+    // FIXED: subscription default must not be null
+    subscription: {
+      type: SubscriptionSchema,
+      default: {
+        status: "inactive",
+        billingProvider: "razorpay",
+        razorpayPaymentIds: [],
+        createdAt: new Date(),
+      },
+    },
+
     brokerAccounts: { type: [BrokerAccountSchema], default: [] },
     timezone: { type: String, default: null },
     currency: { type: String, default: "INR" },
@@ -101,7 +121,7 @@ const UserSchema = new Schema<IUserDocument>(
   { timestamps: true }
 );
 
-// Helpful indexes
+// Indexes
 UserSchema.index({ tier: 1 });
 UserSchema.index({ "subscription.razorpaySubscriptionId": 1 }, { sparse: true });
 

@@ -1,29 +1,38 @@
 // src/api/payments.ts
 import { fetchApi } from "../utils/apiHandler";
 
+// Match the keys we used in backend PLAN_LINKS
+export type PlanKey =
+  | "prime_monthly"
+  | "prime_annual"
+  | "ultraprime_monthly"
+  | "ultraprime_annual";
+
+interface SubscriptionLinkResponse {
+  ok: boolean;
+  plan: PlanKey;
+  url: string;
+}
+
+/**
+ * Payments API wrapper.
+ * We are using Razorpay Subscription Links, so:
+ * - No "create-subscription" from frontend
+ * - No "verify payment" from frontend
+ * - Only: ask backend for the correct subscription link,
+ *   which is protected by auth middleware.
+ */
 export const paymentsApi = {
   /**
-   * Creates a new Razorpay subscription for the authenticated user.
-   * Backend must have POST /payments/create-subscription
+   * Get Razorpay Subscription Link URL for a given plan.
+   * Backend route: GET /payments/subscription-link?plan=...
+   *
+   * - Requires user to be authenticated (401 if not)
+   * - Returns: { ok: true, plan, url }
    */
-  createSubscription: () =>
-    fetchApi<{ subscription: { id: string } }>({
-      url: "/payments/create-subscription",
-      method: "POST",
-    }),
-
-  /**
-   * After Razorpay checkout success callback (handler),
-   * verify the signature + payment on backend.
-   */
-  verifyPayment: (data: {
-    razorpay_payment_id: string;
-    razorpay_subscription_id: string;
-    razorpay_signature: string;
-  }) =>
-    fetchApi<{ ok: boolean; userId?: string }>({
-      url: "/payments/verify",
-      method: "POST",
-      data,
+  getSubscriptionLink: (plan: PlanKey) =>
+    fetchApi<SubscriptionLinkResponse>({
+      url: `/payments/subscription-link?plan=${plan}`,
+      method: "GET",
     }),
 };
