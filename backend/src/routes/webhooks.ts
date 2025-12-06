@@ -20,24 +20,18 @@ function ensureSubscription(user: any) {
       metadata: {},
     };
   }
+  if (!user.subscription.metadata || typeof user.subscription.metadata !== "object") {
+    user.subscription.metadata = {};
+  }
   return user.subscription;
 }
 
-// ---- PLAN META TYPES ----
 interface PlanMeta {
   tier: Tier;
   planLabel: string;
 }
 
-/**
- * Map from plan_key (coming from Razorpay notes.plan_key) -> tier + label.
- *
- * We expect you to configure Subscription Links in Razorpay with Notes:
- * - plan_key = "prime_monthly"
- * - plan_key = "prime_annual"
- * - plan_key = "ultraprime_monthly"
- * - plan_key = "ultraprime_annual"
- */
+// Map our internal keys to tier + label
 function mapPlanFromKey(planKey?: string | null): PlanMeta | null {
   if (!planKey) return null;
 
@@ -55,10 +49,7 @@ function mapPlanFromKey(planKey?: string | null): PlanMeta | null {
   }
 }
 
-/**
- * Fallback: map from Razorpay plan.id (or plan_id) to our meta
- * using env variables (for when plan_id is present).
- */
+// Fallback: map from Razorpay plan.id if you configured envs
 function mapPlanFromId(planId?: string | null): PlanMeta | null {
   if (!planId) return null;
 
@@ -126,7 +117,6 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
     const paymentEntity = payload.payload?.payment?.entity;
     const subscriptionEntity = payload.payload?.subscription?.entity;
 
-    // IDs
     const subId: string | null =
       subscriptionEntity?.id ||
       invoiceEntity?.subscription_id ||
@@ -136,7 +126,6 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
     const paymentId: string | null =
       paymentEntity?.id || invoiceEntity?.payment_id || null;
 
-    // Try to get plan id and plan key (from notes)
     const planId: string | null =
       subscriptionEntity?.plan_id ||
       subscriptionEntity?.plan?.id ||
@@ -144,25 +133,16 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
       invoiceEntity?.plan?.id ||
       null;
 
-    const planKeyFromNotes: string | null =
-      subscriptionEntity?.notes?.plan_key ||
-      invoiceEntity?.notes?.plan_key ||
-      paymentEntity?.notes?.plan_key ||
-      null;
-
-    // Customer email
     const customerEmail: string | null =
       subscriptionEntity?.customer_details?.email ||
       invoiceEntity?.customer_details?.email ||
       paymentEntity?.email ||
       null;
 
-    // Debug logs (keep them while testing; you can remove later)
     console.log("RZP Webhook event:", event);
     console.log("  subId:", subId);
     console.log("  paymentId:", paymentId);
     console.log("  planId:", planId);
-    console.log("  planKeyFromNotes:", planKeyFromNotes);
     console.log("  customerEmail:", customerEmail);
 
     // If we have absolutely no identifiers, nothing to do
@@ -180,9 +160,7 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
         : null;
 
     if (!user && customerEmail) {
-      user = await UserModel.findOne({
-        email: customerEmail.toLowerCase(),
-      });
+      user = await UserModel.findOne({ email: customerEmail.toLowerCase() });
     }
 
     if (!user) {
@@ -200,22 +178,28 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
     }
 
     const subDoc = ensureSubscription(user);
+
+    // Always store subscription id when we see it
     if (subId && !subDoc.razorpaySubscriptionId) {
       subDoc.razorpaySubscriptionId = subId;
     }
 
-    // --- Decide which plan meta to use (plan_key > planId) ---
+    // ---- Decide plan meta: pendingPlanKey > planId fallback ----
+    const pendingPlanKey =
+      (subDoc.metadata && (subDoc.metadata as any).pendingPlanKey) || null;
+
     let planMeta: PlanMeta | null = null;
 
-    // 1) Prefer plan_key from notes (subscription links)
-    if (planKeyFromNotes) {
-      planMeta = mapPlanFromKey(planKeyFromNotes);
+    if (pendingPlanKey) {
+      planMeta = mapPlanFromKey(pendingPlanKey);
     }
 
-    // 2) Fallback to env-mapped planId
     if (!planMeta && planId) {
       planMeta = mapPlanFromId(planId);
     }
+
+    console.log("  pendingPlanKey:", pendingPlanKey);
+    console.log("  resolved planMeta:", planMeta);
 
     // ---- Handle subscription created / activated ----
     if (event === "subscription.activated" || event === "subscription.created") {
@@ -240,6 +224,11 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
         user.subscriptionStart ||
         new Date(subscriptionEntity?.current_start * 1000 || Date.now());
       user.subscriptionEnd = null;
+
+      // Once subscription is active, we no longer need pendingPlanKey
+      if (subDoc.metadata && (subDoc.metadata as any).pendingPlanKey) {
+        delete (subDoc.metadata as any).pendingPlanKey;
+      }
 
       await user.save();
       console.info("Webhook: subscription created/activated for user", String(user._id));
@@ -277,9 +266,7 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
       if (nextAttempt) {
         subDoc.currentPeriodEnd = new Date(nextAttempt * 1000);
       } else if (subscriptionEntity?.current_end) {
-        subDoc.currentPeriodEnd = new Date(
-          subscriptionEntity.current_end * 1000
-        );
+        subDoc.currentPeriodEnd = new Date(subscriptionEntity.current_end * 1000);
       } else if (!subDoc.currentPeriodEnd) {
         const fallback = new Date();
         fallback.setMonth(fallback.getMonth() + 1);
@@ -288,6 +275,10 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
 
       subDoc.metadata = subDoc.metadata || {};
       subDoc.metadata.lastInvoice = invoiceEntity?.id || null;
+
+      if (subDoc.metadata && (subDoc.metadata as any).pendingPlanKey) {
+        delete (subDoc.metadata as any).pendingPlanKey;
+      }
 
       await user.save();
       console.info(
@@ -318,7 +309,6 @@ router.post("/razorpay", express.raw({ type: "*/*" }), async (req, res) => {
       return res.json({ ok: true });
     }
 
-    // ---- Unhandled event types ----
     console.info("Webhook: event ignored", event);
     return res.json({ ok: true, note: "event ignored" });
   } catch (err) {
