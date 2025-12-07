@@ -155,19 +155,18 @@ router.post(
       return res.status(400).send("Invalid JSON");
     }
 
-   const isProd = process.env.NODE_ENV === "production";
+    const isProd = process.env.NODE_ENV === "production";
 
-if (!verifySignature(secret, rawBodyBuffer, signature)) {
-  console.warn("[webhooks] invalid signature");
+    if (!verifySignature(secret, rawBodyBuffer, signature)) {
+      console.warn("[webhooks] invalid signature");
 
-  // ⚠️ TEMP: allow in non-production to debug webhooks
-  if (isProd) {
-    return res.status(401).send("Invalid signature");
-  } else {
-    console.warn("[webhooks] CONTINUING despite invalid signature (DEV MODE)");
-  }
-}
-
+      // ⚠️ TEMP: allow in non-production to debug webhooks
+      if (isProd) {
+        return res.status(401).send("Invalid signature");
+      } else {
+        console.warn("[webhooks] CONTINUING despite invalid signature (DEV MODE)");
+      }
+    }
 
     const event = payload.event as string;
     console.info("[webhooks] event received", event);
@@ -322,7 +321,11 @@ if (!verifySignature(secret, rawBodyBuffer, signature)) {
             ? new Date(currentStartTs * 1000)
             : new Date();
         }
-        user.subscriptionEnd = null;
+
+        // 🔥 NEW: for active subs, subscriptionEnd = current billing period end
+        if (subDoc.currentPeriodEnd) {
+          user.subscriptionEnd = subDoc.currentPeriodEnd;
+        }
 
         if (subDoc.metadata && (subDoc.metadata as any).pendingPlanKey) {
           delete (subDoc.metadata as any).pendingPlanKey;
@@ -371,6 +374,11 @@ if (!verifySignature(secret, rawBodyBuffer, signature)) {
           const fallback = new Date();
           fallback.setMonth(fallback.getMonth() + 1);
           subDoc.currentPeriodEnd = fallback;
+        }
+
+        // 🔥 NEW: keep subscriptionEnd in sync with currentPeriodEnd while active
+        if (subDoc.currentPeriodEnd) {
+          user.subscriptionEnd = subDoc.currentPeriodEnd;
         }
 
         subDoc.metadata = subDoc.metadata || {};
