@@ -4,7 +4,6 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { paymentsApi, PlanKey } from "@/api/payments";
 import { PaymentSuccessModal } from "../payment/PaymentSuccessModal";
@@ -124,47 +123,48 @@ function SimplePricingCard({
   return (
     <div
       className={cn(
-        "rounded-2xl border bg-black/80 shadow-sm overflow-hidden flex flex-col",
-        "min-w-[260px] max-w-[340px] w-full",
+        "group relative flex w-full min-w-[260px] max-w-[360px] flex-col overflow-hidden rounded-3xl border bg-gradient-to-b from-neutral-900/90 to-black/95",
+        "transition-transform duration-200",
         highlight
-          ? "border-white/30 shadow-md"
-          : "border-white/10"
+          ? "border-indigo-400/80 shadow-[0_0_40px_rgba(129,140,248,0.35)] scale-[1.02]"
+          : "border-neutral-800 hover:border-neutral-600 hover:scale-[1.01]"
       )}
       role="group"
     >
+      {/* subtle glow ring */}
+      <div className="pointer-events-none absolute -inset-px rounded-3xl opacity-0 group-hover:opacity-100 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.2),_transparent_60%)] transition-opacity" />
+
       {/* Header */}
-      <div className="relative px-4 pt-4 pb-3 bg-black/80 border-b border-white/10">
-        <div className="flex items-center justify-between gap-2">
+      <div className="relative z-10 px-5 pt-5 pb-4 border-b border-neutral-800/80">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-white leading-tight">
-              {title}
-            </h3>
+            <h3 className="text-sm font-semibold text-white">{title}</h3>
             {subtitle && (
-              <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+              <p className="mt-1 text-[11px] leading-snug text-neutral-400">
                 {subtitle}
               </p>
             )}
           </div>
           {tag && (
-            <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-gray-100">
+            <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-100">
               {tag}
             </span>
           )}
         </div>
 
-        <div className="mt-3">
+        <div className="mt-4">
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-medium text-white leading-tight">
+            <span className="text-3xl font-semibold tracking-tight text-white">
               {price}
             </span>
             {billingPeriod && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-neutral-400">
                 {billingPeriod === "monthly" ? "/month" : "/year"}
               </span>
             )}
           </div>
           {billingPeriod && (
-            <p className="mt-1 text-[11px] text-gray-400">
+            <p className="mt-1 text-[11px] text-neutral-400">
               {billingPeriod === "monthly"
                 ? "Billed every month"
                 : "Billed every year"}
@@ -174,28 +174,30 @@ function SimplePricingCard({
       </div>
 
       {/* Body */}
-      <div className="px-4 py-3 flex-1 min-h-[150px] bg-black/80">
+      <div className="relative z-10 flex-1 px-5 py-4">
         <ul className="space-y-3 text-sm">
           {features.map((f, idx) => (
             <li key={idx} className="flex items-start gap-3">
-              <CheckIcon className="w-4 h-4 mt-0.5 text-gray-400 flex-shrink-0" />
-              <span className="text-sm text-gray-200 leading-tight">{f}</span>
+              <span className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500/15">
+                <CheckIcon className="h-3 w-3 text-indigo-300" />
+              </span>
+              <span className="text-sm leading-snug text-neutral-200">{f}</span>
             </li>
           ))}
         </ul>
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 bg-black/80 border-t border-white/10">
+      <div className="relative z-10 px-5 pb-5 pt-3 border-t border-neutral-800/80">
         <Button
           type="button"
           onClick={onClick}
           disabled={disabled}
           className={cn(
-            "w-full h-10 rounded-md text-sm",
+            "w-full h-10 rounded-full text-sm font-medium transition-all",
             disabled
-              ? "bg-white/5 text-gray-500 cursor-not-allowed"
-              : "bg-white text-black hover:bg-white/90"
+              ? "bg-neutral-800 text-neutral-500 cursor-not-allowed border border-neutral-700"
+              : "bg-white text-black hover:bg-neutral-100 shadow-[0_10px_30px_rgba(0,0,0,0.6)]"
           )}
         >
           {buttonLabel}
@@ -216,12 +218,13 @@ const PricingSection: React.FC<PricingSectionProps> = ({
   const [showSuccessModal, setShowSuccessModal] = React.useState(false);
   const router = useRouter();
 
-  const toggleBilling = () => {
-    setBillingPeriod((prev) => (prev === "monthly" ? "annual" : "monthly"));
+  const toggleBilling = (period: BillingPeriod) => {
+    setBillingPeriod(period);
   };
 
   const isProCurrent = userTier === "Premium";
   const isEliteCurrent = userTier === "UltraPremium";
+  const hasActivePaidPlan = isProCurrent || isEliteCurrent;
 
   const handleSubscribe = async (card: "pro" | "elite") => {
     if (!isAuthenticated) {
@@ -293,8 +296,9 @@ const PricingSection: React.FC<PricingSectionProps> = ({
 
   // Decide button labels & disabled state
   const getProButtonState = () => {
+    // Any active paid plan blocks new purchase (matches backend guard)
     if (isProCurrent) {
-      return { label: "Current Plan", disabled: true };
+      return { label: "Current plan", disabled: true };
     }
     if (isEliteCurrent) {
       return { label: "Downgrade not available", disabled: true };
@@ -307,7 +311,11 @@ const PricingSection: React.FC<PricingSectionProps> = ({
 
   const getEliteButtonState = () => {
     if (isEliteCurrent) {
-      return { label: "Current Plan", disabled: true };
+      return { label: "Current plan", disabled: true };
+    }
+    if (isProCurrent) {
+      // user already on Prime, can’t switch mid-cycle (backend will block anyway)
+      return { label: "Change plan after expiry", disabled: true };
     }
     if (loadingPlan === PLAN_CONFIG.elite[billingPeriod].planKey) {
       return { label: "Processing...", disabled: true };
@@ -330,7 +338,7 @@ const PricingSection: React.FC<PricingSectionProps> = ({
 
   // Free plan button state
   const freeButtonLabel =
-    userTier === "Free" ? "Current Plan" : "Included in all accounts";
+    userTier === "Free" ? "Current plan" : "Included in all accounts";
   const freeButtonDisabled = true; // you can’t “buy” free here
 
   const handleSuccessModalClose = () => {
@@ -340,33 +348,57 @@ const PricingSection: React.FC<PricingSectionProps> = ({
 
   return (
     <>
-      {/* Dark background wrapper */}
-      <section className="w-full py-10 bg-black/80 text-white">
-        <div className="mx-auto max-w-6xl px-4">
+      {/* Full dark wrapper */}
+      <section className="w-full bg-neutral-950 py-12 text-white">
+        <div className="mx-auto flex max-w-6xl flex-col gap-10 px-4">
           {/* Heading */}
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-semibold tracking-tight text-white">
+          <div className="mx-auto max-w-3xl text-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-medium text-neutral-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Designed for serious traders
+            </div>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
               Choose your trading co-pilot
             </h2>
-            <p className="mt-2 text-sm text-gray-300">
-              Free for getting started. Pro and Elite unlock serious,
-              automation-first trading.
+            <p className="mt-3 text-sm text-neutral-300">
+              Free to get started. Pro and Elite unlock automation, AI summaries,
+              and trade sync so you spend less time logging and more time trading.
             </p>
           </div>
 
-          {/* Billing toggle (only relevant for paid plans) */}
-          <div className="mb-8 flex items-center justify-center gap-3">
-            <span className="text-xs text-gray-300">Monthly</span>
-            <Switch
-              checked={billingPeriod === "annual"}
-              onCheckedChange={toggleBilling}
-            />
-            <span className="text-xs font-medium text-white">Annual</span>
-            <span className="ml-2 rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-200">
-              {billingPeriod === "annual"
-                ? "Save more with yearly"
-                : "Switch to yearly to save"}
-            </span>
+          {/* Billing toggle */}
+          <div className="flex items-center justify-center">
+            <div className="inline-flex items-center gap-3 rounded-full border border-neutral-800 bg-neutral-900/80 px-2 py-1">
+              <button
+                type="button"
+                onClick={() => toggleBilling("monthly")}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-medium transition-all",
+                  billingPeriod === "monthly"
+                    ? "bg-white text-black shadow-sm"
+                    : "text-neutral-400 hover:text-neutral-200"
+                )}
+              >
+                Monthly
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleBilling("annual")}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-medium transition-all",
+                  billingPeriod === "annual"
+                    ? "bg-white text-black shadow-sm"
+                    : "text-neutral-400 hover:text-neutral-200"
+                )}
+              >
+                Annual
+              </button>
+              <span className="ml-2 hidden text-[11px] text-neutral-400 sm:inline">
+                {billingPeriod === "annual"
+                  ? "Best value for long-term traders"
+                  : "Switch to annual to save more"}
+              </span>
+            </div>
           </div>
 
           {/* Cards: Free, Pro, Elite */}
@@ -393,7 +425,7 @@ const PricingSection: React.FC<PricingSectionProps> = ({
               buttonLabel={proButton.label}
               disabled={proButton.disabled}
               highlight={userTier === "Free" || userTier === "Premium"}
-              tag="Most Popular"
+              tag="Most popular"
               onClick={
                 proButton.disabled ? undefined : () => handleSubscribe("pro")
               }
@@ -402,14 +434,14 @@ const PricingSection: React.FC<PricingSectionProps> = ({
             {/* Elite / UltraPrime */}
             <SimplePricingCard
               title="Elite (UltraPrime)"
-              subtitle="For serious traders who want automation"
+              subtitle="For traders who want everything automated"
               price={elitePrice}
               billingPeriod={billingPeriod}
               features={ELITE_FEATURES}
               buttonLabel={eliteButton.label}
               disabled={eliteButton.disabled}
               highlight={userTier === "UltraPremium"}
-              tag={userTier === "UltraPremium" ? "Your Plan" : "Power Users"}
+              tag={userTier === "UltraPremium" ? "Your plan" : "Power users"}
               onClick={
                 eliteButton.disabled
                   ? undefined
@@ -419,10 +451,10 @@ const PricingSection: React.FC<PricingSectionProps> = ({
           </div>
 
           {/* Optional info text */}
-          <p className="mt-6 text-center text-[11px] text-gray-400">
-            All paid plans are auto-recurring via Razorpay. You can cancel
-            anytime from your billing settings. Your tier automatically resets
-            to Free if the subscription ends.
+          <p className="mx-auto max-w-2xl text-center text-[11px] text-neutral-500">
+            All paid plans are auto-recurring via Razorpay. You can cancel anytime
+            from your billing settings. Your tier automatically resets to Free if
+            the subscription ends.
           </p>
         </div>
       </section>
