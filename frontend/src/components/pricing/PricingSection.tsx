@@ -126,25 +126,27 @@ function SimplePricingCard({
       className={cn(
         "rounded-2xl border bg-black/80 shadow-sm overflow-hidden flex flex-col",
         "min-w-[260px] max-w-[340px] w-full",
-        highlight ? "border-black shadow-md scale-[1.01]" : "border-[#D9D9D9]"
+        highlight
+          ? "border-white/30 shadow-md"
+          : "border-white/10"
       )}
       role="group"
     >
       {/* Header */}
-      <div className="relative px-4 pt-4 pb-3 bg-[#F8F8F8]">
+      <div className="relative px-4 pt-4 pb-3 bg-black/80 border-b border-white/10">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900 leading-tight">
+            <h3 className="text-sm font-semibold text-white leading-tight">
               {title}
             </h3>
             {subtitle && (
-              <p className="text-[11px] text-gray-500 mt-1 leading-tight">
+              <p className="text-[11px] text-gray-400 mt-1 leading-tight">
                 {subtitle}
               </p>
             )}
           </div>
           {tag && (
-            <span className="inline-flex items-center rounded-full bg-black px-2 py-0.5 text-[10px] font-medium text-white">
+            <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-gray-100">
               {tag}
             </span>
           )}
@@ -152,17 +154,17 @@ function SimplePricingCard({
 
         <div className="mt-3">
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-medium text-black leading-tight">
+            <span className="text-2xl font-medium text-white leading-tight">
               {price}
             </span>
             {billingPeriod && (
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-gray-400">
                 {billingPeriod === "monthly" ? "/month" : "/year"}
               </span>
             )}
           </div>
           {billingPeriod && (
-            <p className="mt-1 text-[11px] text-gray-600">
+            <p className="mt-1 text-[11px] text-gray-400">
               {billingPeriod === "monthly"
                 ? "Billed every month"
                 : "Billed every year"}
@@ -172,25 +174,19 @@ function SimplePricingCard({
       </div>
 
       {/* Body */}
-      <div className="px-4 py-3 flex-1 min-h-[150px]">
+      <div className="px-4 py-3 flex-1 min-h-[150px] bg-black/80">
         <ul className="space-y-3 text-sm">
           {features.map((f, idx) => (
             <li key={idx} className="flex items-start gap-3">
-              <CheckIcon className="w-4 h-4 mt-0.5 text-gray-500 flex-shrink-0" />
-              <span className="text-sm text-gray-700 leading-tight">{f}</span>
+              <CheckIcon className="w-4 h-4 mt-0.5 text-gray-400 flex-shrink-0" />
+              <span className="text-sm text-gray-200 leading-tight">{f}</span>
             </li>
           ))}
         </ul>
       </div>
 
       {/* Footer */}
-      <div
-        className="px-4 py-3"
-        style={{
-          background: "#F8F8F8",
-          borderTop: "1px solid #E6E6E6",
-        }}
-      >
+      <div className="px-4 py-3 bg-black/80 border-t border-white/10">
         <Button
           type="button"
           onClick={onClick}
@@ -198,8 +194,8 @@ function SimplePricingCard({
           className={cn(
             "w-full h-10 rounded-md text-sm",
             disabled
-              ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-              : "bg-black text-white hover:brightness-95"
+              ? "bg-white/5 text-gray-500 cursor-not-allowed"
+              : "bg-white text-black hover:bg-white/90"
           )}
         >
           {buttonLabel}
@@ -349,7 +345,7 @@ const PricingSection: React.FC<PricingSectionProps> = ({
         <div className="mx-auto max-w-6xl px-4">
           {/* Heading */}
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-semibold tracking-tight">
+            <h2 className="text-2xl font-semibold tracking-tight text-white">
               Choose your trading co-pilot
             </h2>
             <p className="mt-2 text-sm text-gray-300">
@@ -365,8 +361,8 @@ const PricingSection: React.FC<PricingSectionProps> = ({
               checked={billingPeriod === "annual"}
               onCheckedChange={toggleBilling}
             />
-            <span className="text-xs font-medium">Annual</span>
-            <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-gray-200">
+            <span className="text-xs font-medium text-white">Annual</span>
+            <span className="ml-2 rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-gray-200">
               {billingPeriod === "annual"
                 ? "Save more with yearly"
                 : "Switch to yearly to save"}
@@ -423,7 +419,7 @@ const PricingSection: React.FC<PricingSectionProps> = ({
           </div>
 
           {/* Optional info text */}
-          <p className="mt-6 text-center text-[11px] text-gray-300">
+          <p className="mt-6 text-center text-[11px] text-gray-400">
             All paid plans are auto-recurring via Razorpay. You can cancel
             anytime from your billing settings. Your tier automatically resets
             to Free if the subscription ends.
