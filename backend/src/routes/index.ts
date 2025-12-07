@@ -8,7 +8,7 @@ import analyticsRoutes from "./analytics.js";
 import strategyRoutes from "./strategyRoutes.js";
 import importCsvRoutes from "./importCsv.js";
 import paymentsRoutes from "./payments.js";
-
+import webhooksRoutes from "./webhooks.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 
 const router = Router();
@@ -29,6 +29,6 @@ router.use("/strategies", strategyRoutes);
 router.use("/import", importCsvRoutes);
 
 router.use("/payments", paymentsRoutes);  // remove authMiddleware here
-
+router.use("/webhooks", webhooksRoutes);
 
 export default router;
