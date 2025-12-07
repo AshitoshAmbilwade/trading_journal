@@ -124,7 +124,7 @@ function SimplePricingCard({
   return (
     <div
       className={cn(
-        "rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col",
+        "rounded-2xl border bg-black/80 shadow-sm overflow-hidden flex flex-col",
         "min-w-[260px] max-w-[340px] w-full",
         highlight ? "border-black shadow-md scale-[1.01]" : "border-[#D9D9D9]"
       )}

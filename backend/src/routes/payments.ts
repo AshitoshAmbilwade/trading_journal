@@ -54,9 +54,19 @@ interface PlanConfig {
   label: string;
   tier: "Premium" | "UltraPremium";
   billingInterval: "monthly" | "annual";
-  totalCount: number;
+  /**
+   * totalCount:
+   *  - 0 or undefined  => infinite subscription (until cancelled)
+   *  - > 0             => limited number of billing cycles
+   */
+  totalCount?: number;
 }
 
+/**
+ * NOTE:
+ *  For proper SaaS behaviour (auto-renew until cancelled),
+ *  we keep totalCount = 0 (or undefined) and DO NOT send total_count to Razorpay.
+ */
 const PLAN_CONFIGS: Record<PlanKey, PlanConfig> = {
   prime_monthly: {
     key: "prime_monthly",
@@ -64,7 +74,7 @@ const PLAN_CONFIGS: Record<PlanKey, PlanConfig> = {
     label: "Prime — Monthly",
     tier: "Premium",
     billingInterval: "monthly",
-    totalCount: 12,
+    totalCount: 0, // infinite until cancelled
   },
   prime_annual: {
     key: "prime_annual",
@@ -72,7 +82,7 @@ const PLAN_CONFIGS: Record<PlanKey, PlanConfig> = {
     label: "Prime — Annual",
     tier: "Premium",
     billingInterval: "annual",
-    totalCount: 1,
+    totalCount: 0, // ✅ was 1 (caused Razorpay 'Completed' after first charge)
   },
   ultraprime_monthly: {
     key: "ultraprime_monthly",
@@ -80,7 +90,7 @@ const PLAN_CONFIGS: Record<PlanKey, PlanConfig> = {
     label: "UltraPrime — Monthly",
     tier: "UltraPremium",
     billingInterval: "monthly",
-    totalCount: 12,
+    totalCount: 0, // infinite
   },
   ultraprime_annual: {
     key: "ultraprime_annual",
@@ -88,7 +98,7 @@ const PLAN_CONFIGS: Record<PlanKey, PlanConfig> = {
     label: "UltraPrime — Annual",
     tier: "UltraPremium",
     billingInterval: "annual",
-    totalCount: 1,
+    totalCount: 0, // ✅ was 1
   },
 };
 
@@ -282,22 +292,27 @@ router.post(
       return;
     }
 
-    // 2️⃣ Create subscription in Razorpay linked to that customer
-    const subscription = await razorpay.subscriptions.create(
-      {
-        plan_id: config.razorpayPlanId,
-        customer_id: customerId,
-        customer_notify: 1,
-        total_count: config.totalCount,
-        notes: {
-          app_user_id: String(user._id),
-          app_plan_key: planKey,
-          app_plan_label: config.label,
-          app_tier: config.tier,
-          app_email: user.email,
-        },
-      } as any
-    );
+    // 2️⃣ Build subscription payload (DO NOT always send total_count)
+    const payload: any = {
+      plan_id: config.razorpayPlanId,
+      customer_id: customerId,
+      customer_notify: 1,
+      notes: {
+        app_user_id: String(user._id),
+        app_plan_key: planKey,
+        app_plan_label: config.label,
+        app_tier: config.tier,
+        app_email: user.email,
+      },
+    };
+
+    // Only send total_count if you really want a limited-cycle subscription
+    if (config.totalCount && config.totalCount > 0) {
+      payload.total_count = config.totalCount;
+    }
+
+    // 3️⃣ Create subscription in Razorpay linked to that customer
+    const subscription = await razorpay.subscriptions.create(payload as any);
 
     // Always store latest subscription id and pending plan
     subDoc.metadata.pendingPlanKey = planKey;
