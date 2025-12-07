@@ -155,18 +155,19 @@ router.post(
       return res.status(400).send("Invalid JSON");
     }
 
-    const isProd = process.env.NODE_ENV === "production";
+   const isProd = process.env.NODE_ENV === "production";
 
-    if (!verifySignature(secret, rawBodyBuffer, signature)) {
-      console.warn("[webhooks] invalid signature");
+if (!verifySignature(secret, rawBodyBuffer, signature)) {
+  console.warn("[webhooks] invalid signature");
 
-      // ⚠️ TEMP: allow in non-production to debug webhooks
-      if (isProd) {
-        return res.status(401).send("Invalid signature");
-      } else {
-        console.warn("[webhooks] CONTINUING despite invalid signature (DEV MODE)");
-      }
-    }
+  // ⚠️ TEMP: allow in non-production to debug webhooks
+  if (isProd) {
+    return res.status(401).send("Invalid signature");
+  } else {
+    console.warn("[webhooks] CONTINUING despite invalid signature (DEV MODE)");
+  }
+}
+
 
     const event = payload.event as string;
     console.info("[webhooks] event received", event);
@@ -305,11 +306,10 @@ router.post(
           applyPlanToSubscription(subDoc, planMeta, invoiceEntity, subscriptionEntity);
         }
 
-        // capture end-of-billing-period once
-        let periodEnd: Date | null = null;
         if (subscriptionEntity?.current_end) {
-          periodEnd = new Date(subscriptionEntity.current_end * 1000);
-          subDoc.currentPeriodEnd = periodEnd;
+          subDoc.currentPeriodEnd = new Date(
+            subscriptionEntity.current_end * 1000
+          );
         }
 
         const currentStartTs =
@@ -322,14 +322,7 @@ router.post(
             ? new Date(currentStartTs * 1000)
             : new Date();
         }
-
-        // For ANNUAL plans, store subscriptionEnd = currentPeriodEnd
-        if (planMeta && planMeta.planLabel.includes("Annual") && periodEnd) {
-          user.subscriptionEnd = periodEnd;
-        } else {
-          // For monthly or unknown, keep behaviour: no fixed end at activation
-          user.subscriptionEnd = null;
-        }
+        user.subscriptionEnd = null;
 
         if (subDoc.metadata && (subDoc.metadata as any).pendingPlanKey) {
           delete (subDoc.metadata as any).pendingPlanKey;
