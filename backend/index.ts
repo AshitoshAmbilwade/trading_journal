@@ -1,31 +1,58 @@
+// src/index.ts
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { connectDB } from "./db.js";
+
+// 🚨 IMPORT WEBHOOK ROUTE SEPARATELY (must be mounted before express.json)
+import webhooksRoutes from "./src/routes/webhooks.js";
+
 import routes from "./src/routes/index.js";
 
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware (simple global CORS)
+/* ────────────────────────────────────────────────
+   1️⃣ CORS (global, safe)
+──────────────────────────────────────────────── */
 app.use(
   cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
-app.use(express.json());
+/* ────────────────────────────────────────────────
+   2️⃣ RAW BODY FOR RAZORPAY WEBHOOKS — ABSOLUTELY REQUIRED
+   This MUST come BEFORE express.json() 
+──────────────────────────────────────────────── */
+app.use(
+  "/api/webhooks/razorpay",
+  express.raw({ type: "application/json" }),  // <-- important
+  webhooksRoutes
+);
 
-// Test route
+/* ────────────────────────────────────────────────
+   3️⃣ Normal JSON parser for everything else
+──────────────────────────────────────────────── */
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+/* ────────────────────────────────────────────────
+   4️⃣ Health check
+──────────────────────────────────────────────── */
 app.get("/", (req, res) => res.send("Backend running 🚀"));
 
-// API routes
+/* ────────────────────────────────────────────────
+   5️⃣ Mount all remaining API routes
+──────────────────────────────────────────────── */
 app.use("/api", routes);
 
-// Connect DB then start server
+/* ────────────────────────────────────────────────
+   6️⃣ Connect and Start server
+──────────────────────────────────────────────── */
 connectDB().then(() => {
   app.listen(PORT, () =>
     console.log(`🚀 Server running on http://localhost:${PORT}`)
