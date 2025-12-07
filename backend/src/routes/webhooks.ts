@@ -87,16 +87,49 @@ function verifySignature(secret: string, rawBody: Buffer, signature: string) {
   }
 }
 
+// helper: fill plan object on subscription
+function applyPlanToSubscription(
+  subDoc: any,
+  planMeta: PlanMeta | null,
+  invoiceEntity: any,
+  subscriptionEntity: any
+) {
+  if (!planMeta) return;
+
+  const planAmountPaise =
+    subscriptionEntity?.plan?.item?.amount ??
+    subscriptionEntity?.plan?.amount ??
+    invoiceEntity?.amount ??
+    0;
+
+  const baseAmount = planAmountPaise
+    ? planAmountPaise / 100
+    : subDoc.plan?.baseAmount ?? 0;
+
+  subDoc.plan = {
+    name: planMeta.planLabel,
+    baseAmount,
+    gstPercent: subDoc.plan?.gstPercent ?? 0,
+    totalAmount: subDoc.plan?.totalAmount ?? baseAmount,
+    currency: subDoc.plan?.currency ?? "INR",
+  };
+}
+
 router.post(
   "/razorpay",
-  // we *try* to get the raw body, but we'll also be robust if some JSON parser already ran
+  // raw body to verify Razorpay signature
   express.raw({ type: "*/*" }),
   async (req, res) => {
+    console.info("[webhooks] /webhooks/razorpay hit", {
+      time: new Date().toISOString(),
+      headers: req.headers,
+    });
+
     const secret = process.env.RZP_WEBHOOK_SECRET;
     const signature = (req.headers["x-razorpay-signature"] as string) || "";
 
     if (!signature || !secret) {
-      console.warn("Webhook: missing signature or secret");
+      console.warn("[webhooks] missing signature or secret");
       return res.status(400).send("Missing signature/secret");
     }
 
@@ -107,31 +140,28 @@ router.post(
 
     try {
       if (Buffer.isBuffer(body)) {
-        // Ideal case: raw buffer
         rawBodyBuffer = body;
         payload = JSON.parse(body.toString());
       } else if (typeof body === "string") {
-        // If some middleware gave us a string
         rawBodyBuffer = Buffer.from(body);
         payload = JSON.parse(body);
       } else {
-        // Already parsed JSON object (Express/BodyParser ran before us)
         const str = JSON.stringify(body);
         rawBodyBuffer = Buffer.from(str);
         payload = body;
       }
     } catch (err) {
-      console.error("webhook: invalid json", err);
+      console.error("[webhooks] invalid json", err);
       return res.status(400).send("Invalid JSON");
     }
 
-    // ✅ FIX: now we always pass a Buffer to crypto, no more "Received an instance of Object"
     if (!verifySignature(secret, rawBodyBuffer, signature)) {
-      console.warn("Webhook: invalid signature");
+      console.warn("[webhooks] invalid signature");
       return res.status(401).send("Invalid signature");
     }
 
     const event = payload.event as string;
+    console.info("[webhooks] event received", event);
 
     try {
       const invoiceEntity = payload.payload?.invoice?.entity;
@@ -160,19 +190,30 @@ router.post(
         paymentEntity?.email ||
         null;
 
-      console.log("RZP Webhook event:", event);
-      console.log("  subId:", subId);
-      console.log("  paymentId:", paymentId);
-      console.log("  planId:", planId);
-      console.log("  customerEmail:", customerEmail);
+      const customerId: string | null =
+        subscriptionEntity?.customer_id ||
+        invoiceEntity?.customer_id ||
+        paymentEntity?.customer_id ||
+        null;
 
-      // If we have absolutely no identifiers, nothing to do
-      if (!subId && !paymentId && !customerEmail) {
-        console.info("Webhook: no subId/paymentId/email in payload for event", event);
+      console.log("[webhooks] extracted identifiers", {
+        event,
+        subId,
+        paymentId,
+        planId,
+        customerEmail,
+        customerId,
+      });
+
+      if (!subId && !paymentId && !customerEmail && !customerId) {
+        console.info(
+          "[webhooks] no subId/paymentId/email/customerId in payload for event",
+          event
+        );
         return res.json({ ok: true, note: "no relevant id" });
       }
 
-      // --- Find user: first by subscriptionId, then by email ---
+      // --- Find user: subscriptionId -> customerId -> email ---
       let user =
         subId
           ? await UserModel.findOne({
@@ -180,29 +221,51 @@ router.post(
             })
           : null;
 
+      if (!user && customerId) {
+        user = await UserModel.findOne({
+          "subscription.metadata.razorpayCustomerId": customerId,
+        });
+      }
+
       if (!user && customerEmail) {
         user = await UserModel.findOne({ email: customerEmail.toLowerCase() });
       }
 
       if (!user) {
-        console.warn(
-          "Webhook: user not found for subId",
+        console.warn("[webhooks] user not found", {
           subId,
-          "paymentId",
           paymentId,
-          "email",
           customerEmail,
-          "event",
-          event
-        );
+          customerId,
+          event,
+        });
         return res.json({ ok: true, note: "user not found" });
       }
 
       const subDoc = ensureSubscription(user);
 
-      // Always store subscription id when we see it
-      if (subId && !subDoc.razorpaySubscriptionId) {
+      // Always store / update subscription id when we see it
+      if (subId && subDoc.razorpaySubscriptionId !== subId) {
+        if (
+          subDoc.razorpaySubscriptionId &&
+          subDoc.razorpaySubscriptionId !== subId
+        ) {
+          console.warn("[webhooks] subscriptionId changed for user", {
+            userId: String(user._id),
+            old: subDoc.razorpaySubscriptionId,
+            new: subId,
+          });
+          subDoc.metadata = subDoc.metadata || {};
+          (subDoc.metadata as any).previousSubscriptionId =
+            subDoc.razorpaySubscriptionId;
+        }
         subDoc.razorpaySubscriptionId = subId;
+      }
+
+      // Also sync customerId into metadata if present
+      if (customerId) {
+        subDoc.metadata = subDoc.metadata || {};
+        (subDoc.metadata as any).razorpayCustomerId = customerId;
       }
 
       // ---- Decide plan meta: pendingPlanKey > planId fallback ----
@@ -219,8 +282,11 @@ router.post(
         planMeta = mapPlanFromId(planId);
       }
 
-      console.log("  pendingPlanKey:", pendingPlanKey);
-      console.log("  resolved planMeta:", planMeta);
+      console.log("[webhooks] plan resolution", {
+        pendingPlanKey,
+        planId,
+        planMeta,
+      });
 
       // ---- Handle subscription created / activated ----
       if (event === "subscription.activated" || event === "subscription.created") {
@@ -228,36 +294,44 @@ router.post(
 
         if (planMeta) {
           user.tier = planMeta.tier;
-          subDoc.plan = {
-            name: planMeta.planLabel,
-            baseAmount: subDoc.plan?.baseAmount ?? 0,
-            gstPercent: subDoc.plan?.gstPercent ?? 0,
-            totalAmount: subDoc.plan?.totalAmount ?? 0,
-            currency: subDoc.plan?.currency ?? "INR",
-          };
+          applyPlanToSubscription(subDoc, planMeta, invoiceEntity, subscriptionEntity);
         }
 
         if (subscriptionEntity?.current_end) {
-          subDoc.currentPeriodEnd = new Date(subscriptionEntity.current_end * 1000);
+          subDoc.currentPeriodEnd = new Date(
+            subscriptionEntity.current_end * 1000
+          );
         }
 
-        user.subscriptionStart =
-          user.subscriptionStart ||
-          new Date(subscriptionEntity?.current_start * 1000 || Date.now());
+        const currentStartTs =
+          subscriptionEntity?.current_start ||
+          subscriptionEntity?.start_at ||
+          subscriptionEntity?.created_at;
+
+        if (!user.subscriptionStart) {
+          user.subscriptionStart = currentStartTs
+            ? new Date(currentStartTs * 1000)
+            : new Date();
+        }
         user.subscriptionEnd = null;
 
-        // Once subscription is active, we no longer need pendingPlanKey
         if (subDoc.metadata && (subDoc.metadata as any).pendingPlanKey) {
           delete (subDoc.metadata as any).pendingPlanKey;
         }
 
+        user.markModified("subscription");
         await user.save();
-        console.info("Webhook: subscription created/activated for user", String(user._id));
+        console.info("[webhooks] subscription created/activated", {
+          userId: String(user._id),
+          tier: user.tier,
+          status: subDoc.status,
+        });
         return res.json({ ok: true });
       }
 
       // ---- Handle success payment / charge events ----
       if (
+        event === "subscription.charged" ||
         event === "subscription.charged_successfully" ||
         event === "invoice.paid" ||
         event === "payment.captured" ||
@@ -274,20 +348,16 @@ router.post(
 
         if (planMeta) {
           user.tier = planMeta.tier;
-          subDoc.plan = {
-            name: planMeta.planLabel,
-            baseAmount: subDoc.plan?.baseAmount ?? 0,
-            gstPercent: subDoc.plan?.gstPercent ?? 0,
-            totalAmount: subDoc.plan?.totalAmount ?? 0,
-            currency: subDoc.plan?.currency ?? "INR",
-          };
+          applyPlanToSubscription(subDoc, planMeta, invoiceEntity, subscriptionEntity);
         }
 
         const nextAttempt = invoiceEntity?.next_payment_attempt;
         if (nextAttempt) {
           subDoc.currentPeriodEnd = new Date(nextAttempt * 1000);
         } else if (subscriptionEntity?.current_end) {
-          subDoc.currentPeriodEnd = new Date(subscriptionEntity.current_end * 1000);
+          subDoc.currentPeriodEnd = new Date(
+            subscriptionEntity.current_end * 1000
+          );
         } else if (!subDoc.currentPeriodEnd) {
           const fallback = new Date();
           fallback.setMonth(fallback.getMonth() + 1);
@@ -301,21 +371,29 @@ router.post(
           delete (subDoc.metadata as any).pendingPlanKey;
         }
 
+        user.markModified("subscription");
         await user.save();
-        console.info(
-          "Webhook: payment success / subscription active for user",
-          String(user._id),
-          "event",
-          event
-        );
+        console.info("[webhooks] payment success / subscription active", {
+          userId: String(user._id),
+          tier: user.tier,
+          status: subDoc.status,
+          event,
+        });
         return res.json({ ok: true });
       }
 
       // ---- Handle failed payments ----
-      if (event === "subscription.charged_unsuccessfully" || event === "payment.failed") {
+      if (
+        event === "subscription.charged_unsuccessfully" ||
+        event === "payment.failed"
+      ) {
         subDoc.status = "past_due";
+        user.markModified("subscription");
         await user.save();
-        console.info("Webhook: marked past_due for user", String(user._id), "event", event);
+        console.info("[webhooks] marked past_due", {
+          userId: String(user._id),
+          event,
+        });
         return res.json({ ok: true });
       }
 
@@ -325,15 +403,35 @@ router.post(
         subDoc.currentPeriodEnd = new Date();
         user.subscriptionEnd = new Date();
         user.tier = "Free";
+        user.markModified("subscription");
         await user.save();
-        console.info("Webhook: cancelled subscription for user", String(user._id));
+        console.info("[webhooks] subscription cancelled", {
+          userId: String(user._id),
+        });
         return res.json({ ok: true });
       }
 
-      console.info("Webhook: event ignored", event);
+      // ---- Handle completed / expired (end of subscription) ----
+      if (event === "subscription.completed" || event === "subscription.expired") {
+        subDoc.status = "cancelled";
+        const endedAt = subscriptionEntity?.ended_at
+          ? new Date(subscriptionEntity.ended_at * 1000)
+          : new Date();
+        subDoc.currentPeriodEnd = endedAt;
+        user.subscriptionEnd = endedAt;
+        user.tier = "Free";
+        user.markModified("subscription");
+        await user.save();
+        console.info("[webhooks] subscription completed/expired", {
+          userId: String(user._id),
+        });
+        return res.json({ ok: true });
+      }
+
+      console.info("[webhooks] event ignored", event);
       return res.json({ ok: true, note: "event ignored" });
     } catch (err) {
-      console.error("webhook handler error", err);
+      console.error("[webhooks] handler error", err);
       return res.status(500).send("server error");
     }
   }

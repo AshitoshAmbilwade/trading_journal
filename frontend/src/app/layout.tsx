@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster"; // ✅ import toaster
+import { Toaster } from "@/components/ui/toaster";
+import Script from "next/script";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,6 +49,11 @@ export default function RootLayout({
       >
         {children}
         <Toaster /> {/* ✅ add toaster globally at the end */}
+
+        <Script
+          src="https://checkout.razorpay.com/v1/checkout.js"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );

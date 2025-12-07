@@ -16,6 +16,13 @@ interface PricingSectionProps {
   onRequireLogin?: () => void; // optional callback to open login modal, etc.
 }
 
+// ---- Razorpay global type (for TS) ----
+declare global {
+  interface Window {
+    Razorpay?: any;
+  }
+}
+
 // --- Feature lists ---
 const PRO_FEATURES: string[] = [
   "4 weekly AI summaries (4x)",
@@ -115,9 +122,13 @@ function SimplePricingCard({
       <div className="relative px-4 pt-4 pb-3 bg-[#F8F8F8]">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900 leading-tight">{title}</h3>
+            <h3 className="text-sm font-semibold text-gray-900 leading-tight">
+              {title}
+            </h3>
             {subtitle && (
-              <p className="text-[11px] text-gray-500 mt-1 leading-tight">{subtitle}</p>
+              <p className="text-[11px] text-gray-500 mt-1 leading-tight">
+                {subtitle}
+              </p>
             )}
           </div>
           {highlight && (
@@ -129,7 +140,9 @@ function SimplePricingCard({
 
         <div className="mt-3">
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-medium text-black leading-tight">{price}</span>
+            <span className="text-2xl font-medium text-black leading-tight">
+              {price}
+            </span>
             <span className="text-xs text-gray-500">
               {billingPeriod === "monthly" ? "/month" : "/year"}
             </span>
@@ -185,7 +198,8 @@ const PricingSection: React.FC<PricingSectionProps> = ({
   isAuthenticated,
   onRequireLogin,
 }) => {
-  const [billingPeriod, setBillingPeriod] = React.useState<BillingPeriod>("monthly");
+  const [billingPeriod, setBillingPeriod] =
+    React.useState<BillingPeriod>("monthly");
   const [loadingPlan, setLoadingPlan] = React.useState<PlanKey | null>(null);
 
   const toggleBilling = () => {
@@ -204,6 +218,18 @@ const PricingSection: React.FC<PricingSectionProps> = ({
       return;
     }
 
+    if (typeof window === "undefined") {
+      alert("Payment can only be started in the browser.");
+      return;
+    }
+
+    if (!window.Razorpay) {
+      alert(
+        "Razorpay SDK not loaded. Please check script include: https://checkout.razorpay.com/v1/checkout.js"
+      );
+      return;
+    }
+
     const planConfig =
       card === "pro"
         ? PLAN_CONFIG.pro[billingPeriod]
@@ -213,15 +239,45 @@ const PricingSection: React.FC<PricingSectionProps> = ({
 
     try {
       setLoadingPlan(planKey);
-      const res = await paymentsApi.getSubscriptionLink(planKey);
-      if (res.ok && res.url) {
-        window.open(res.url, "_blank");
-      } else {
-        console.error("Failed to get subscription link:", res);
+
+      // Call backend to create Razorpay subscription
+      const res = await paymentsApi.createSubscription(planKey);
+
+      if (!res.ok || !res.subscriptionId || !res.razorpayKeyId) {
+        console.error("Failed to create subscription:", res);
         alert("Unable to start payment. Please try again.");
+        return;
       }
+
+      const options = {
+        key: res.razorpayKeyId,
+        subscription_id: res.subscriptionId,
+        name: "TradeReportz",
+        description: `Subscription – ${card === "pro" ? "Pro" : "Elite"} plan`,
+        // optional: logo / image
+        // image: "/logo.png",
+        handler: function (_response: any) {
+          // Razorpay payment success (front-end side)
+          // Actual tier/status update is handled by webhook in backend.
+          alert(
+            "Payment successful! Your subscription will be activated shortly."
+          );
+          // Optionally: redirect to dashboard or success page
+          // window.location.href = "/dashboard";
+        },
+        modal: {
+          ondismiss: function () {
+            // user closed the Razorpay modal
+            console.log("Razorpay Checkout closed");
+          },
+        },
+        // You can also add prefill, theme, notes if you want
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
     } catch (err) {
-      console.error("Error getting subscription link:", err);
+      console.error("Error creating subscription:", err);
       alert("Something went wrong while connecting to payment. Please try again.");
     } finally {
       setLoadingPlan(null);
@@ -230,20 +286,26 @@ const PricingSection: React.FC<PricingSectionProps> = ({
 
   // Decide button labels & disabled state
   const getProButtonState = () => {
-    if (userTier === "Premium") {
+    if (isProCurrent) {
       return { label: "Current Plan", disabled: true };
     }
-    if (userTier === "UltraPremium") {
+    if (isEliteCurrent) {
       return { label: "Downgrade not available", disabled: true };
     }
-    return { label: "Choose Pro", disabled: loadingPlan !== null };
+    if (loadingPlan === PLAN_CONFIG.pro[billingPeriod].planKey) {
+      return { label: "Processing...", disabled: true };
+    }
+    return { label: "Choose Pro", disabled: false };
   };
 
   const getEliteButtonState = () => {
-    if (userTier === "UltraPremium") {
+    if (isEliteCurrent) {
       return { label: "Current Plan", disabled: true };
     }
-    return { label: "Choose Elite", disabled: loadingPlan !== null };
+    if (loadingPlan === PLAN_CONFIG.elite[billingPeriod].planKey) {
+      return { label: "Processing...", disabled: true };
+    }
+    return { label: "Choose Elite", disabled: false };
   };
 
   const proButton = getProButtonState();
@@ -268,7 +330,8 @@ const PricingSection: React.FC<PricingSectionProps> = ({
             Choose your trading co-pilot
           </h2>
           <p className="mt-2 text-sm text-gray-600">
-            Start with Pro for part-time traders or Elite for serious, automation-first traders.
+            Start with Pro for part-time traders or Elite for serious,
+            automation-first traders.
           </p>
         </div>
 
@@ -281,7 +344,9 @@ const PricingSection: React.FC<PricingSectionProps> = ({
           />
           <span className="text-xs text-gray-900 font-medium">Annual</span>
           <span className="ml-2 rounded-full bg-black/5 px-2 py-0.5 text-[10px] text-gray-700">
-            {billingPeriod === "annual" ? "Save more with yearly" : "Switch to yearly to save"}
+            {billingPeriod === "annual"
+              ? "Save more with yearly"
+              : "Switch to yearly to save"}
           </span>
         </div>
 
@@ -298,9 +363,7 @@ const PricingSection: React.FC<PricingSectionProps> = ({
             disabled={proButton.disabled}
             highlight={userTier === "Free" || userTier === "Premium"}
             onClick={
-              proButton.disabled
-                ? undefined
-                : () => handleSubscribe("pro")
+              proButton.disabled ? undefined : () => handleSubscribe("pro")
             }
           />
 
@@ -315,16 +378,15 @@ const PricingSection: React.FC<PricingSectionProps> = ({
             disabled={eliteButton.disabled}
             highlight={userTier === "UltraPremium"}
             onClick={
-              eliteButton.disabled
-                ? undefined
-                : () => handleSubscribe("elite")
+              eliteButton.disabled ? undefined : () => handleSubscribe("elite")
             }
           />
         </div>
 
         {/* Optional info text */}
         <p className="mt-6 text-center text-[11px] text-gray-500">
-          All plans are auto-recurring via Razorpay. You can cancel anytime from your billing settings.
+          All plans are auto-recurring via Razorpay. You can cancel anytime
+          from your billing settings.
         </p>
       </div>
     </section>

@@ -28,7 +28,7 @@ router.use("/analytics", analyticsRoutes);
 router.use("/strategies", strategyRoutes);
 router.use("/import", importCsvRoutes);
 
-router.use("/payments", authMiddleware, paymentsRoutes);
+router.use("/payments", paymentsRoutes);  // remove authMiddleware here
 router.use("/webhooks", webhooksRoutes);
 
 export default router;
