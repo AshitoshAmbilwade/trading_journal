@@ -322,7 +322,7 @@ router.post(
             : new Date();
         }
 
-        // 🔥 NEW: for active subs, subscriptionEnd = current billing period end
+        // keep subscriptionEnd in sync with current billing period
         if (subDoc.currentPeriodEnd) {
           user.subscriptionEnd = subDoc.currentPeriodEnd;
         }
@@ -376,7 +376,21 @@ router.post(
           subDoc.currentPeriodEnd = fallback;
         }
 
-        // 🔥 NEW: keep subscriptionEnd in sync with currentPeriodEnd while active
+        // ✅ NEW: set subscriptionStart here if it was never set (for flows where first event is payment.captured)
+        if (!user.subscriptionStart) {
+          const currentStartTs =
+            subscriptionEntity?.current_start ||
+            subscriptionEntity?.start_at ||
+            subscriptionEntity?.created_at ||
+            invoiceEntity?.created_at ||
+            paymentEntity?.created_at;
+
+          user.subscriptionStart = currentStartTs
+            ? new Date(currentStartTs * 1000)
+            : new Date();
+        }
+
+        // keep subscriptionEnd in sync with current billing period
         if (subDoc.currentPeriodEnd) {
           user.subscriptionEnd = subDoc.currentPeriodEnd;
         }
