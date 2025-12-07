@@ -155,19 +155,10 @@ router.post(
       return res.status(400).send("Invalid JSON");
     }
 
-   const isProd = process.env.NODE_ENV === "production";
-
-if (!verifySignature(secret, rawBodyBuffer, signature)) {
-  console.warn("[webhooks] invalid signature");
-
-  // ⚠️ TEMP: allow in non-production to debug webhooks
-  if (isProd) {
-    return res.status(401).send("Invalid signature");
-  } else {
-    console.warn("[webhooks] CONTINUING despite invalid signature (DEV MODE)");
-  }
-}
-
+    if (!verifySignature(secret, rawBodyBuffer, signature)) {
+      console.warn("[webhooks] invalid signature");
+      return res.status(401).send("Invalid signature");
+    }
 
     const event = payload.event as string;
     console.info("[webhooks] event received", event);
@@ -447,4 +438,3 @@ if (!verifySignature(secret, rawBodyBuffer, signature)) {
 );
 
 export default router;
-
