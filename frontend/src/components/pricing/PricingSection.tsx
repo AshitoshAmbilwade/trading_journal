@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { CheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { paymentsApi, PlanKey } from "@/api/payments";
+import { PaymentSuccessModal } from "../payment/PaymentSuccessModal";
 
 type BillingPeriod = "monthly" | "annual";
 type Tier = "Free" | "Premium" | "UltraPremium";
@@ -24,28 +26,36 @@ declare global {
 }
 
 // --- Feature lists ---
+const FREE_FEATURES: string[] = [
+  "Manual trade journaling",
+  "Basic dashboard & stats",
+  "Limited AI summaries",
+  "Limited trade history",
+  "Ads supported experience",
+];
+
 const PRO_FEATURES: string[] = [
   "4 weekly AI summaries (4x)",
   "1 monthly AI summary",
   "AI performance analysis",
-  "Priority support",
   "Unlimited journaling",
   "Advanced dashboard",
-  "Basic goals",
+  "Goals & basic habit tracking",
   "CSV/Excel import",
-  "Basic PDF/CSV export",
+  "PDF/CSV export",
   "Monthly email report",
-  "Limited AI insights",
+  "Ad-free experience",
 ];
 
 const ELITE_FEATURES: string[] = [
   "Everything in Pro",
-  "Trade Sync (Zerodha/Upstox/Angel, etc.)",
+  "Trade Sync (Zerodha / Upstox / Angel, etc.)",
   "Daily AI summaries",
   "Unlimited AI reports",
   "Advanced goals & habit tracking",
   "Priority support",
   "Faster AI processing",
+  "Ad-free experience",
 ];
 
 // --- Plan config: maps card + billing -> label, price and backend plan key ---
@@ -85,16 +95,17 @@ const PLAN_CONFIG: {
   },
 };
 
-// Simple pricing card inspired by your example (UI only, no CheckoutSheet)
+// Simple pricing card
 interface SimplePricingCardProps {
   title: string;
   subtitle?: string;
   price: string;
-  billingPeriod: BillingPeriod;
+  billingPeriod?: BillingPeriod;
   features: string[];
   buttonLabel: string;
   disabled?: boolean;
   highlight?: boolean;
+  tag?: string;
   onClick?: () => void;
 }
 
@@ -107,14 +118,15 @@ function SimplePricingCard({
   buttonLabel,
   disabled = false,
   highlight = false,
+  tag,
   onClick,
 }: SimplePricingCardProps) {
   return (
     <div
       className={cn(
-        "rounded-lg border bg-white shadow-sm overflow-hidden flex flex-col",
-        "min-w-[300px] max-w-[360px] w-full",
-        highlight ? "border-black shadow-md" : "border-[#D9D9D9]"
+        "rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col",
+        "min-w-[260px] max-w-[340px] w-full",
+        highlight ? "border-black shadow-md scale-[1.01]" : "border-[#D9D9D9]"
       )}
       role="group"
     >
@@ -131,9 +143,9 @@ function SimplePricingCard({
               </p>
             )}
           </div>
-          {highlight && (
+          {tag && (
             <span className="inline-flex items-center rounded-full bg-black px-2 py-0.5 text-[10px] font-medium text-white">
-              Most Popular
+              {tag}
             </span>
           )}
         </div>
@@ -143,15 +155,19 @@ function SimplePricingCard({
             <span className="text-2xl font-medium text-black leading-tight">
               {price}
             </span>
-            <span className="text-xs text-gray-500">
-              {billingPeriod === "monthly" ? "/month" : "/year"}
-            </span>
+            {billingPeriod && (
+              <span className="text-xs text-gray-500">
+                {billingPeriod === "monthly" ? "/month" : "/year"}
+              </span>
+            )}
           </div>
-          <p className="mt-1 text-[11px] text-gray-600">
-            {billingPeriod === "monthly"
-              ? "Billed every month"
-              : "Billed every year"}
-          </p>
+          {billingPeriod && (
+            <p className="mt-1 text-[11px] text-gray-600">
+              {billingPeriod === "monthly"
+                ? "Billed every month"
+                : "Billed every year"}
+            </p>
+          )}
         </div>
       </div>
 
@@ -201,17 +217,17 @@ const PricingSection: React.FC<PricingSectionProps> = ({
   const [billingPeriod, setBillingPeriod] =
     React.useState<BillingPeriod>("monthly");
   const [loadingPlan, setLoadingPlan] = React.useState<PlanKey | null>(null);
+  const [showSuccessModal, setShowSuccessModal] = React.useState(false);
+  const router = useRouter();
 
   const toggleBilling = () => {
     setBillingPeriod((prev) => (prev === "monthly" ? "annual" : "monthly"));
   };
 
-  // Decide button states based on user tier
   const isProCurrent = userTier === "Premium";
   const isEliteCurrent = userTier === "UltraPremium";
 
   const handleSubscribe = async (card: "pro" | "elite") => {
-    // Enforce login at UI level (backend will also enforce)
     if (!isAuthenticated) {
       if (onRequireLogin) onRequireLogin();
       else alert("Please log in to start a subscription.");
@@ -240,7 +256,6 @@ const PricingSection: React.FC<PricingSectionProps> = ({
     try {
       setLoadingPlan(planKey);
 
-      // Call backend to create Razorpay subscription
       const res = await paymentsApi.createSubscription(planKey);
 
       if (!res.ok || !res.subscriptionId || !res.razorpayKeyId) {
@@ -253,32 +268,28 @@ const PricingSection: React.FC<PricingSectionProps> = ({
         key: res.razorpayKeyId,
         subscription_id: res.subscriptionId,
         name: "TradeReportz",
-        description: `Subscription – ${card === "pro" ? "Pro" : "Elite"} plan`,
-        // optional: logo / image
-        // image: "/logo.png",
+        description: `Subscription – ${
+          card === "pro" ? "Pro (Prime)" : "Elite (UltraPrime)"
+        }`,
         handler: function (_response: any) {
-          // Razorpay payment success (front-end side)
-          // Actual tier/status update is handled by webhook in backend.
-          alert(
-            "Payment successful! Your subscription will be activated shortly."
-          );
-          // Optionally: redirect to dashboard or success page
-          // window.location.href = "/dashboard";
+          // Payment successful on Razorpay side.
+          // Backend final activation is via webhook.
+          setShowSuccessModal(true);
         },
         modal: {
           ondismiss: function () {
-            // user closed the Razorpay modal
             console.log("Razorpay Checkout closed");
           },
         },
-        // You can also add prefill, theme, notes if you want
       };
 
       const rzp = new window.Razorpay(options);
       rzp.open();
     } catch (err) {
       console.error("Error creating subscription:", err);
-      alert("Something went wrong while connecting to payment. Please try again.");
+      alert(
+        "Something went wrong while connecting to payment. Please try again."
+      );
     } finally {
       setLoadingPlan(null);
     }
@@ -321,75 +332,111 @@ const PricingSection: React.FC<PricingSectionProps> = ({
       ? PLAN_CONFIG.elite.monthly.price
       : PLAN_CONFIG.elite.annual.price;
 
+  // Free plan button state
+  const freeButtonLabel =
+    userTier === "Free" ? "Current Plan" : "Included in all accounts";
+  const freeButtonDisabled = true; // you can’t “buy” free here
+
+  const handleSuccessModalClose = () => {
+    setShowSuccessModal(false);
+    router.push("/dashboard");
+  };
+
   return (
-    <section className="w-full py-10">
-      <div className="mx-auto max-w-5xl px-4">
-        {/* Heading */}
-        <div className="text-center mb-8">
-          <h2 className="text-2xl font-semibold tracking-tight text-gray-900">
-            Choose your trading co-pilot
-          </h2>
-          <p className="mt-2 text-sm text-gray-600">
-            Start with Pro for part-time traders or Elite for serious,
-            automation-first traders.
+    <>
+      {/* Dark background wrapper */}
+      <section className="w-full py-10 bg-black/80 text-white">
+        <div className="mx-auto max-w-6xl px-4">
+          {/* Heading */}
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-semibold tracking-tight">
+              Choose your trading co-pilot
+            </h2>
+            <p className="mt-2 text-sm text-gray-300">
+              Free for getting started. Pro and Elite unlock serious,
+              automation-first trading.
+            </p>
+          </div>
+
+          {/* Billing toggle (only relevant for paid plans) */}
+          <div className="mb-8 flex items-center justify-center gap-3">
+            <span className="text-xs text-gray-300">Monthly</span>
+            <Switch
+              checked={billingPeriod === "annual"}
+              onCheckedChange={toggleBilling}
+            />
+            <span className="text-xs font-medium">Annual</span>
+            <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-gray-200">
+              {billingPeriod === "annual"
+                ? "Save more with yearly"
+                : "Switch to yearly to save"}
+            </span>
+          </div>
+
+          {/* Cards: Free, Pro, Elite */}
+          <div className="grid gap-6 md:grid-cols-3 justify-items-center">
+            {/* Free */}
+            <SimplePricingCard
+              title="Free"
+              subtitle="Perfect to try TradeReportz"
+              price="₹0"
+              features={FREE_FEATURES}
+              buttonLabel={freeButtonLabel}
+              disabled={freeButtonDisabled}
+              tag={userTier === "Free" ? "Current" : "Starter"}
+              highlight={userTier === "Free"}
+            />
+
+            {/* Pro / Prime */}
+            <SimplePricingCard
+              title="Pro (Prime)"
+              subtitle="Best for part-time or beginner traders"
+              price={proPrice}
+              billingPeriod={billingPeriod}
+              features={PRO_FEATURES}
+              buttonLabel={proButton.label}
+              disabled={proButton.disabled}
+              highlight={userTier === "Free" || userTier === "Premium"}
+              tag="Most Popular"
+              onClick={
+                proButton.disabled ? undefined : () => handleSubscribe("pro")
+              }
+            />
+
+            {/* Elite / UltraPrime */}
+            <SimplePricingCard
+              title="Elite (UltraPrime)"
+              subtitle="For serious traders who want automation"
+              price={elitePrice}
+              billingPeriod={billingPeriod}
+              features={ELITE_FEATURES}
+              buttonLabel={eliteButton.label}
+              disabled={eliteButton.disabled}
+              highlight={userTier === "UltraPremium"}
+              tag={userTier === "UltraPremium" ? "Your Plan" : "Power Users"}
+              onClick={
+                eliteButton.disabled
+                  ? undefined
+                  : () => handleSubscribe("elite")
+              }
+            />
+          </div>
+
+          {/* Optional info text */}
+          <p className="mt-6 text-center text-[11px] text-gray-300">
+            All paid plans are auto-recurring via Razorpay. You can cancel
+            anytime from your billing settings. Your tier automatically resets
+            to Free if the subscription ends.
           </p>
         </div>
+      </section>
 
-        {/* Billing toggle */}
-        <div className="mb-8 flex items-center justify-center gap-3">
-          <span className="text-xs text-gray-600">Monthly</span>
-          <Switch
-            checked={billingPeriod === "annual"}
-            onCheckedChange={toggleBilling}
-          />
-          <span className="text-xs text-gray-900 font-medium">Annual</span>
-          <span className="ml-2 rounded-full bg-black/5 px-2 py-0.5 text-[10px] text-gray-700">
-            {billingPeriod === "annual"
-              ? "Save more with yearly"
-              : "Switch to yearly to save"}
-          </span>
-        </div>
-
-        {/* Cards */}
-        <div className="grid gap-6 md:grid-cols-2 justify-items-center">
-          {/* Pro / Prime */}
-          <SimplePricingCard
-            title="Pro"
-            subtitle="Best for part-time or beginner traders"
-            price={proPrice}
-            billingPeriod={billingPeriod}
-            features={PRO_FEATURES}
-            buttonLabel={proButton.label}
-            disabled={proButton.disabled}
-            highlight={userTier === "Free" || userTier === "Premium"}
-            onClick={
-              proButton.disabled ? undefined : () => handleSubscribe("pro")
-            }
-          />
-
-          {/* Elite / UltraPrime */}
-          <SimplePricingCard
-            title="Elite"
-            subtitle="For serious traders who want automation"
-            price={elitePrice}
-            billingPeriod={billingPeriod}
-            features={ELITE_FEATURES}
-            buttonLabel={eliteButton.label}
-            disabled={eliteButton.disabled}
-            highlight={userTier === "UltraPremium"}
-            onClick={
-              eliteButton.disabled ? undefined : () => handleSubscribe("elite")
-            }
-          />
-        </div>
-
-        {/* Optional info text */}
-        <p className="mt-6 text-center text-[11px] text-gray-500">
-          All plans are auto-recurring via Razorpay. You can cancel anytime
-          from your billing settings.
-        </p>
-      </div>
-    </section>
+      {/* Success modal */}
+      <PaymentSuccessModal
+        open={showSuccessModal}
+        onClose={handleSuccessModalClose}
+      />
+    </>
   );
 };
 
