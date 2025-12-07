@@ -247,6 +247,31 @@ router.post(
       return;
     }
 
+    // ✅ NEW: block creating a new subscription if current one is still active and not ended
+    const existingSub = (user as any).subscription;
+    const now = new Date();
+    if (
+      existingSub &&
+      existingSub.status === "active" &&
+      existingSub.currentPeriodEnd &&
+      new Date(existingSub.currentPeriodEnd) > now
+    ) {
+      console.info("[payments] user already has active subscription, blocking new one", {
+        userId: String(user._id),
+        currentPlan: existingSub.plan?.name,
+        currentPeriodEnd: existingSub.currentPeriodEnd,
+      });
+
+      res.status(400).json({
+        ok: false,
+        error:
+          "You already have an active subscription. You can change plan after the current period ends.",
+        currentPlan: existingSub.plan?.name || null,
+        currentPeriodEnd: existingSub.currentPeriodEnd,
+      });
+      return;
+    }
+
     const subDoc = ensureSubscription(user);
 
     // 1️⃣ Ensure we have / reuse a Razorpay Customer
@@ -258,7 +283,7 @@ router.post(
         const customer = await razorpay.customers.create({
           name: user.name,
           email: user.email,
-          contact: user.number,
+          contact: (user as any).number,
           fail_existing: "0",
           notes: {
             app_user_id: String(user._id),

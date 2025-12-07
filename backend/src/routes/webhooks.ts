@@ -293,7 +293,7 @@ router.post(
         subDoc.status = "active";
 
         if (planMeta) {
-          user.tier = planMeta.tier;
+          // ✅ Do NOT set user.tier here. Tier should change only after successful payment.
           applyPlanToSubscription(subDoc, planMeta, invoiceEntity, subscriptionEntity);
         }
 
@@ -347,6 +347,7 @@ router.post(
         }
 
         if (planMeta) {
+          // ✅ Tier is updated only on successful payment
           user.tier = planMeta.tier;
           applyPlanToSubscription(subDoc, planMeta, invoiceEntity, subscriptionEntity);
         }
