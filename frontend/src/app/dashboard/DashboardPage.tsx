@@ -9,6 +9,7 @@ import { TradeBuddy } from "./TradeBuddy";
 import  Reports  from "./Reports";
 import { Settings } from "./Settings";
 import { AnalyticsShell } from "../../components/analytics";
+import PricingPage from "../pricing/page";
 import TradingLabStrategiesPage from "./../trading-lab/strategies/page";
 
 const pageVariants = {
@@ -89,6 +90,19 @@ function AppRoutes() {
             transition={pageTransition}
           >
             <TradingLabStrategiesPage />
+          </motion.div>
+        )}
+
+        {currentPath === "/pricing" && (
+          <motion.div
+            key={`Pricing Plan:${currentPath}`}
+            variants={pageVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={pageTransition}
+          >
+            <PricingPage />
           </motion.div>
         )}
 
