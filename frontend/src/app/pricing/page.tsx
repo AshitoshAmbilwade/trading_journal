@@ -14,8 +14,8 @@ export default function PricingPage() {
   };
 
   return (
-    <main className="min-h-screen bg-white dark:bg-neutral-950 py-16 px-4">
-      <div className="max-w-6xl mx-auto">
+    
+      <div >
         {/* Optional: you can add a skeleton loader while user is loading */}
         {loading ? (
           <div className="text-center text-sm text-gray-500">Loading...</div>
@@ -27,6 +27,5 @@ export default function PricingPage() {
           />
         )}
       </div>
-    </main>
   );
 }

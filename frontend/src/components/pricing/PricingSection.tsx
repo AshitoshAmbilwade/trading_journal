@@ -159,7 +159,7 @@ function SimplePricingCard({
             </span>
             {billingPeriod && (
               <span className="text-xs text-neutral-400">
-                {billingPeriod === "monthly" ? "/month" : "/year"}
+                
               </span>
             )}
           </div>
