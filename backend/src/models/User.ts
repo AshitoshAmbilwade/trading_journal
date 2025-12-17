@@ -2,8 +2,15 @@
 import { Schema, model, Document } from "mongoose";
 
 export type Tier = "Free" | "Premium" | "UltraPremium";
-export type SubscriptionStatus = "inactive" | "trial" | "active" | "past_due" | "cancelled";
+export type SubscriptionStatus =
+  | "inactive"
+  | "trial"
+  | "active"
+  | "past_due"
+  | "cancelled";
 export type BillingProvider = "razorpay" | "stripe" | "manual";
+
+/* ---------------- Types ---------------- */
 
 export interface SubscriptionPlan {
   name: string;
@@ -14,8 +21,8 @@ export interface SubscriptionPlan {
 }
 
 export interface SubscriptionMeta {
-  // we use this for Razorpay flow
-  pendingPlanKey?: string; // "prime_monthly" | "prime_annual" | "ultraprime_monthly" | "ultraprime_annual"
+  // Razorpay flow helpers
+  pendingPlanKey?: string;
   lastInvoice?: string | null;
   [key: string]: any;
 }
@@ -28,9 +35,25 @@ export interface IUser {
 
   tier: Tier;
 
+  /**
+   * @deprecated
+   * ❌ DO NOT USE
+   * Legacy fields kept temporarily for backward compatibility.
+   * Use `subscription.currentPeriodEnd` instead.
+   */
   subscriptionStart?: Date | null;
+
+  /**
+   * @deprecated
+   * ❌ DO NOT USE
+   * Legacy fields kept temporarily for backward compatibility.
+   * Use `subscription.currentPeriodEnd` instead.
+   */
   subscriptionEnd?: Date | null;
 
+  /**
+   * ✅ SINGLE SOURCE OF TRUTH FOR BILLING
+   */
   subscription?: {
     status: SubscriptionStatus;
     billingProvider?: BillingProvider;
@@ -46,20 +69,27 @@ export interface IUser {
   timezone?: string | null;
   currency?: string;
 
-  brokerAccounts?: { type: string; brokerId: string; token: string }[];
+  brokerAccounts?: {
+    type: string;
+    brokerId: string;
+    token: string;
+  }[];
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export interface IUserDocument extends IUser, Document {}
 
+/* ---------------- Schemas ---------------- */
+
 // ---- Plan Subschema ----
 const SubscriptionPlanSchema = new Schema(
   {
-    name: { type: String },
-    baseAmount: { type: Number },
-    gstPercent: { type: Number },
-    totalAmount: { type: Number },
+    name: String,
+    baseAmount: Number,
+    gstPercent: Number,
+    totalAmount: Number,
     currency: { type: String, default: "INR" },
   },
   { _id: false }
@@ -79,18 +109,21 @@ const SubscriptionSchema = new Schema(
       default: "razorpay",
     },
 
-    // ❗️IMPORTANT: removed `index: true` + `sparse: true` to avoid duplicate index warning.
-    // We define the index once on UserSchema below.
     razorpaySubscriptionId: { type: String },
+    razorpayPaymentIds: { type: [String], default: [] },
 
-    razorpayPaymentIds: [{ type: String }],
     plan: { type: SubscriptionPlanSchema },
+
+    /**
+     * ✅ CANONICAL END DATE
+     * Frontend + backend must rely ONLY on this
+     */
     currentPeriodEnd: { type: Date, default: null },
+
     trialEndsAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now },
 
-    // can store pendingPlanKey, lastInvoice, etc.
-    metadata: { type: Schema.Types.Mixed },
+    metadata: { type: Schema.Types.Mixed, default: {} },
   },
   { _id: false }
 );
@@ -98,9 +131,9 @@ const SubscriptionSchema = new Schema(
 // ---- Broker Subschema ----
 const BrokerAccountSchema = new Schema(
   {
-    type: { type: String },
-    brokerId: { type: String },
-    token: { type: String },
+    type: String,
+    brokerId: String,
+    token: String,
   },
   { _id: false }
 );
@@ -109,23 +142,34 @@ const BrokerAccountSchema = new Schema(
 const UserSchema = new Schema<IUserDocument>(
   {
     name: { type: String, required: true },
-    email: { type: String, required: true, unique: true, index: true },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+
     password: { type: String, required: true },
     number: { type: String },
 
-    tier: { type: String, enum: ["Free", "Premium", "UltraPremium"], default: "Free" },
+    tier: {
+      type: String,
+      enum: ["Free", "Premium", "UltraPremium"],
+      default: "Free",
+    },
 
+    // ❌ Legacy – deprecated (do not use)
     subscriptionStart: { type: Date, default: null },
     subscriptionEnd: { type: Date, default: null },
 
-    // subscription default must not be null
+    // ✅ Billing source of truth
     subscription: {
       type: SubscriptionSchema,
       default: {
         status: "inactive",
         billingProvider: "razorpay",
         razorpayPaymentIds: [],
-        createdAt: new Date(),
         metadata: {},
       },
     },
@@ -137,10 +181,9 @@ const UserSchema = new Schema<IUserDocument>(
   { timestamps: true }
 );
 
-// Indexes
-UserSchema.index({ tier: 1 });
+/* ---------------- Indexes ---------------- */
 
-// single canonical index for subscription id (no duplicate)
+UserSchema.index({ tier: 1 });
 UserSchema.index(
   { "subscription.razorpaySubscriptionId": 1 },
   { sparse: true }
